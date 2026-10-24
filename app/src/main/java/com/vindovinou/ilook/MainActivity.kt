@@ -9,6 +9,7 @@ import android.hardware.camera2.CaptureRequest
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import android.util.Size
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
@@ -163,7 +164,14 @@ class MainActivity : AppCompatActivity() {
             .setResolutionSelector(
                 ResolutionSelector.Builder()
                     .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
-                    .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY)
+                    // Cap at ~12 MP: the S25 Ultra can expose 50/200 MP modes, which the
+                    // full-resolution pipeline cannot hold in memory.
+                    .setResolutionStrategy(
+                        ResolutionStrategy(
+                            Size(4000, 3000),
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER,
+                        ),
+                    )
                     .build(),
             )
         // Ask the ISP for clean, un-oversharpened frames; our own pipeline adds Apple-like detail.

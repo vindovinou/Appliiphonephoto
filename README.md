@@ -28,15 +28,24 @@ traitement Samsung possible, puis applique son propre pipeline « à la Apple »
 Le **viseur affiche le rendu en direct** : la même LUT 3D tourne sur le GPU, donc ce que tu vois
 correspond à la photo finale (sans le Smart HDR, qui n'est appliqué qu'à la capture).
 
-## Interface (façon iPhone)
+## Interface (copie de l'appareil photo iOS 26 du 17 Pro Max)
 
-- Boutons de zoom **.5 · 1× · 2 · 4 · 8** comme sur le 17 Pro Max. L'ultra grand-angle du S25
-  descend à 0,6×, c'est lui qu'on obtient avec « .5 ».
-- **Styles photographiques** : Standard, Contraste riche, Éclatant, Naturel, Ambre, Froid, N&B.
-- Toucher pour faire la mise au point, puis glisser vers le haut ou le bas pour l'exposition (☀).
-- Pincer pour zoomer, boutons de volume pour déclencher.
-- Flash Auto / On / Off, Smart HDR on/off.
-- Les photos sont enregistrées dans `DCIM/iLook` (JPEG qualité 95, EXIF conservés).
+- Modes **PHOTO** et **VIDÉO** en bas ; balayer l'image à gauche/droite pour changer de mode.
+- **Flèche ⌃** en haut : ouvre le volet de réglages à la place des modes :
+  Flash (Auto/On/Off), Format (**4:3 · 16:9 · 1:1**), Retardateur (Off/3 s/10 s),
+  Exposition (curseur), Styles photographiques, Grille.
+- **QuickTake** : appui long sur le déclencheur en mode Photo pour filmer, relâcher pour arrêter.
+- Vidéo 1080p avec le même rendu de couleurs que les photos, chrono rouge pendant
+  l'enregistrement, lampe en vidéo.
+- Boutons de zoom **.5 · 1× · 2 · 4 · 8**. L'ultra grand-angle du S25 descend à 0,6×, c'est lui
+  qu'on obtient avec « .5 ».
+- Les icônes pivotent avec le téléphone et les photos prises en paysage sont dans le bon sens.
+- Toucher pour la mise au point puis glisser pour l'exposition (☀), pincer pour zoomer, boutons
+  de volume pour déclencher, son et vibration du déclencheur.
+- Photos et vidéos dans `DCIM/iLook` (JPEG qualité 95, EXIF conservés).
+
+Pas reproduits, car ils dépendent du matériel ou du logiciel d'Apple : Cinématique, Ralenti,
+Spatial, Panorama, mode Nuit, Live Photo, Portrait.
 
 ## Installer
 

@@ -22,24 +22,15 @@ import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.util.concurrent.Executor
 
-/** CameraX effect that renders the preview through the iPhone-look 3D LUT on the GPU. */
-class LutPreviewEffect private constructor(
-    executor: Executor,
-    val processor: LutSurfaceProcessor,
-) : CameraEffect(PREVIEW, executor, processor, { Log.e(TAG, "Preview effect error", it) }) {
-
-    companion object {
-        private const val TAG = "LutPreviewEffect"
-
-        fun create(initial: Lut3D): LutPreviewEffect {
-            val p = LutSurfaceProcessor(initial)
-            return LutPreviewEffect(p.executor, p)
-        }
-    }
-
-    fun setLut(lut: Lut3D) = processor.setLut(lut)
-    fun release() = processor.release()
-}
+/**
+ * CameraX effect that renders camera frames through the iPhone-look 3D LUT on the GPU.
+ * [targets] is PREVIEW, or PREVIEW | VIDEO_CAPTURE so recorded video gets the same look.
+ * Several effects can share one [LutSurfaceProcessor]; only one is bound at a time.
+ */
+class LutEffect(
+    targets: Int,
+    processor: LutSurfaceProcessor,
+) : CameraEffect(targets, processor.executor, processor, { Log.e("LutEffect", "Effect error", it) })
 
 class LutSurfaceProcessor(initialLut: Lut3D) : SurfaceProcessor {
 

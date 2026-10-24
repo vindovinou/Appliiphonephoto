@@ -6,46 +6,7 @@
     android:layout_height="match_parent"
     android:background="@color/black">
 
-    <!-- Top bar: flash · style · HDR -->
-    <LinearLayout
-        android:id="@+id/topBar"
-        android:layout_width="0dp"
-        android:layout_height="56dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingHorizontal="16dp"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
-
-        <TextView
-            android:id="@+id/flashButton"
-            style="@style/TopBarButton"
-            android:text="⚡ Auto" />
-
-        <View
-            android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
-
-        <TextView
-            android:id="@+id/styleButton"
-            style="@style/TopBarButton"
-            android:background="@drawable/pill_bg"
-            android:paddingHorizontal="14dp"
-            android:text="Standard" />
-
-        <View
-            android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
-
-        <TextView
-            android:id="@+id/hdrButton"
-            style="@style/TopBarButton"
-            android:text="HDR" />
-    </LinearLayout>
-
+    <!-- Viewfinder: 3:4 (photo 4:3), 9:16 (photo 16:9 and video) or 1:1. -->
     <androidx.camera.view.PreviewView
         android:id="@+id/previewView"
         android:layout_width="0dp"
@@ -55,6 +16,16 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/topBar"
         app:scaleType="fillCenter" />
+
+    <com.vindovinou.ilook.GridOverlay
+        android:id="@+id/grid"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="@id/previewView"
+        app:layout_constraintEnd_toEndOf="@id/previewView"
+        app:layout_constraintStart_toStartOf="@id/previewView"
+        app:layout_constraintTop_toTopOf="@id/previewView" />
 
     <com.vindovinou.ilook.FocusView
         android:id="@+id/focusView"
@@ -77,6 +48,18 @@
         app:layout_constraintTop_toTopOf="@id/previewView" />
 
     <TextView
+        android:id="@+id/countdown"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="@color/white"
+        android:textSize="120sp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="@id/previewView"
+        app:layout_constraintEnd_toEndOf="@id/previewView"
+        app:layout_constraintStart_toStartOf="@id/previewView"
+        app:layout_constraintTop_toTopOf="@id/previewView" />
+
+    <TextView
         android:id="@+id/infoLabel"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
@@ -91,7 +74,80 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="@id/previewView" />
 
-    <!-- Zoom pills: .5  1x  2  4  8 -->
+    <!-- Top bar: flash · chevron (settings tray) / recording timer · Smart HDR -->
+    <FrameLayout
+        android:id="@+id/topBar"
+        android:layout_width="0dp"
+        android:layout_height="52dp"
+        android:background="@color/black"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <ImageButton
+            android:id="@+id/flashButton"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:layout_gravity="start|center_vertical"
+            android:layout_marginStart="12dp"
+            android:background="@drawable/tray_btn_bg"
+            android:contentDescription="Flash"
+            android:src="@drawable/ic_flash_auto" />
+
+        <ImageButton
+            android:id="@+id/chevronButton"
+            android:layout_width="44dp"
+            android:layout_height="36dp"
+            android:layout_gravity="center"
+            android:background="@android:color/transparent"
+            android:contentDescription="Réglages"
+            android:src="@drawable/ic_chevron_up" />
+
+        <TextView
+            android:id="@+id/recTimer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:background="@drawable/rec_bg"
+            android:fontFeatureSettings="tnum"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="2dp"
+            android:text="00:00:00"
+            android:textColor="@color/white"
+            android:textSize="17sp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/hdrButton"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:layout_gravity="end|center_vertical"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/pill_bg"
+            android:gravity="center"
+            android:paddingHorizontal="12dp"
+            android:text="HDR"
+            android:textColor="@color/ios_yellow"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+    </FrameLayout>
+
+    <!-- Zero-height marker at the bottom of the viewfinder, for the zoom bar barrier. -->
+    <View
+        android:id="@+id/previewBottom"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintBottom_toBottomOf="@id/previewView"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <androidx.constraintlayout.widget.Barrier
+        android:id="@+id/zoomBarrier"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        app:barrierDirection="top"
+        app:constraint_referenced_ids="previewBottom,optionsRow" />
+
+    <!-- Zoom stops: .5  1×  2  4  8 -->
     <LinearLayout
         android:id="@+id/zoomBar"
         android:layout_width="wrap_content"
@@ -101,69 +157,136 @@
         android:gravity="center"
         android:orientation="horizontal"
         android:paddingHorizontal="4dp"
-        app:layout_constraintBottom_toBottomOf="@id/previewView"
+        app:layout_constraintBottom_toTopOf="@id/zoomBarrier"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent" />
 
-    <TextView
-        android:id="@+id/modeLabel"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="14dp"
-        android:letterSpacing="0.08"
-        android:text="@string/mode_photo"
-        android:textColor="@color/ios_yellow"
-        android:textSize="14sp"
-        android:textStyle="bold"
+    <!-- Choices for the selected tray control (or the exposure slider). -->
+    <FrameLayout
+        android:id="@+id/optionsRow"
+        android:layout_width="0dp"
+        android:layout_height="44dp"
+        android:visibility="invisible"
+        app:layout_constraintBottom_toTopOf="@id/modeArea"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/previewView" />
+        app:layout_constraintStart_toStartOf="parent">
 
-    <ImageView
-        android:id="@+id/thumbnail"
-        android:layout_width="52dp"
-        android:layout_height="52dp"
-        android:layout_marginStart="32dp"
-        android:background="@drawable/thumb_bg"
-        android:clipToOutline="true"
-        android:contentDescription="Galerie"
-        android:scaleType="centerCrop"
-        app:layout_constraintBottom_toBottomOf="@id/shutterButton"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="@id/shutterButton" />
+        <LinearLayout
+            android:id="@+id/optionsList"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:orientation="horizontal" />
 
-    <ProgressBar
-        android:id="@+id/processing"
-        android:layout_width="28dp"
-        android:layout_height="28dp"
-        android:indeterminateTint="@color/white"
-        android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="@id/thumbnail"
-        app:layout_constraintEnd_toEndOf="@id/thumbnail"
-        app:layout_constraintStart_toStartOf="@id/thumbnail"
-        app:layout_constraintTop_toTopOf="@id/thumbnail" />
+        <SeekBar
+            android:id="@+id/exposureSeek"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_marginHorizontal="32dp"
+            android:progressBackgroundTint="#88FFFFFF"
+            android:progressTint="@color/ios_yellow"
+            android:thumbTint="@color/ios_yellow"
+            android:visibility="gone" />
+    </FrameLayout>
 
-    <ImageButton
-        android:id="@+id/shutterButton"
-        android:layout_width="78dp"
-        android:layout_height="78dp"
-        android:background="@drawable/shutter"
-        android:contentDescription="Prendre une photo"
+    <!-- Mode carousel or the settings tray, same slot like on iOS. -->
+    <FrameLayout
+        android:id="@+id/modeArea"
+        android:layout_width="0dp"
+        android:layout_height="72dp"
+        app:layout_constraintBottom_toTopOf="@id/bottomBar"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <LinearLayout
+            android:id="@+id/modeBar"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/modeVideo"
+                style="@style/ModeLabel"
+                android:text="VIDÉO" />
+
+            <TextView
+                android:id="@+id/modePhoto"
+                style="@style/ModeLabel"
+                android:text="PHOTO" />
+        </LinearLayout>
+
+        <HorizontalScrollView
+            android:id="@+id/tray"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/trayList"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="8dp" />
+        </HorizontalScrollView>
+    </FrameLayout>
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/bottomBar"
+        android:layout_width="0dp"
+        android:layout_height="120dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/modeLabel" />
+        app:layout_constraintStart_toStartOf="parent">
 
-    <ImageButton
-        android:id="@+id/flipButton"
-        android:layout_width="52dp"
-        android:layout_height="52dp"
-        android:layout_marginEnd="32dp"
-        android:background="@drawable/round_dark"
-        android:contentDescription="Changer de caméra"
-        android:src="@drawable/ic_flip"
-        app:layout_constraintBottom_toBottomOf="@id/shutterButton"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintTop_toTopOf="@id/shutterButton" />
+        <ImageView
+            android:id="@+id/thumbnail"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:layout_marginStart="32dp"
+            android:background="@drawable/thumb_bg"
+            android:clipToOutline="true"
+            android:contentDescription="Galerie"
+            android:scaleType="centerCrop"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <ProgressBar
+            android:id="@+id/processing"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:indeterminateTint="@color/white"
+            android:visibility="gone"
+            app:layout_constraintBottom_toBottomOf="@id/thumbnail"
+            app:layout_constraintEnd_toEndOf="@id/thumbnail"
+            app:layout_constraintStart_toStartOf="@id/thumbnail"
+            app:layout_constraintTop_toTopOf="@id/thumbnail" />
+
+        <com.vindovinou.ilook.ShutterButton
+            android:id="@+id/shutterButton"
+            android:layout_width="80dp"
+            android:layout_height="80dp"
+            android:contentDescription="Déclencheur"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <ImageButton
+            android:id="@+id/flipButton"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:layout_marginEnd="32dp"
+            android:background="@drawable/round_dark"
+            android:contentDescription="Changer de caméra"
+            android:src="@drawable/ic_flip"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

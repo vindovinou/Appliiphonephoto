@@ -30,7 +30,16 @@ correspond à la photo finale (sans le Smart HDR, qui n'est appliqué qu'à la c
 
 ## Interface (copie de l'appareil photo iOS 26 du 17 Pro Max)
 
-- Modes **PHOTO** et **VIDÉO** en bas ; balayer l'image à gauche/droite pour changer de mode.
+- Modes dans l'ordre de l'iPhone : **TIME-LAPSE · RALENTI · CINÉMATIQUE · VIDÉO · PHOTO ·
+  PORTRAIT**. Balayer l'image à gauche ou à droite pour changer de mode.
+  - **Portrait** : arrière-plan flouté derrière les personnes, en direct dans le viseur et sur la
+    photo finale (détection de personnes ML Kit, sur le téléphone).
+  - **Cinématique** : vidéo 24 i/s avec arrière-plan flouté en direct.
+  - **Ralenti** : vidéo haute vitesse (120/240 i/s) via l'API officielle. N'apparaît que si le
+    téléphone l'ouvre aux applis tierces.
+  - **Time-lapse** : une image toutes les 0,5 s, vidéo 1080p accélérée 15×, avec le rendu iPhone.
+  - **Mode Nuit** (icône lune, en Photo) : traitement nuit de Samsung, si Samsung l'ouvre aux
+    autres applis.
 - **Flèche ⌃** en haut : ouvre le volet de réglages à la place des modes :
   Flash (Auto/On/Off), Format (**4:3 · 16:9 · 1:1**), Retardateur (Off/3 s/10 s),
   Exposition (curseur), Styles photographiques, Grille.
@@ -44,8 +53,10 @@ correspond à la photo finale (sans le Smart HDR, qui n'est appliqué qu'à la c
   de volume pour déclencher, son et vibration du déclencheur.
 - Photos et vidéos dans `DCIM/iLook` (JPEG qualité 95, EXIF conservés).
 
-Pas reproduits, car ils dépendent du matériel ou du logiciel d'Apple : Cinématique, Ralenti,
-Spatial, Panorama, mode Nuit, Live Photo, Portrait.
+Pas reproduits : Panorama (demande un assemblage d'images en direct), Spatial (vidéo 3D pour
+l'Apple Vision Pro) et Live Photo. Le flou de Portrait et Cinématique vient d'une détection de
+personnes, pas d'une vraie carte de profondeur : il marche sur les personnes, pas sur les objets
+ou les animaux.
 
 ## Installer
 

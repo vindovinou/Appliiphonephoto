@@ -54,6 +54,113 @@ object ImageProcessor {
         }.awaitAll()
     }
 
+    // ---------------- Portrait ----------------
+
+    /**
+     * Portrait-mode background blur: blends [src] with a heavily blurred copy wherever
+     * [mask] says "background". [strength] scales the blur radius (1 = iPhone-like f/4.5 look).
+     */
+    suspend fun portrait(src: Bitmap, mask: PersonSegmenter.FloatMask, strength: Float = 1f): Bitmap {
+        val w = src.width
+        val h = src.height
+        // Blur at 1/8 resolution, then upsample bilinearly while blending.
+        val sw = maxOf(8, w / 8)
+        val sh = maxOf(8, h / 8)
+        val small = Bitmap.createScaledBitmap(src, sw, sh, true)
+        val bg = IntArray(sw * sh)
+        small.getPixels(bg, 0, sw, 0, 0, sw, sh)
+        small.recycle()
+        val r = maxOf(2, (maxOf(sw, sh) / 70f * strength).toInt())
+        repeat(3) { boxBlurArgb(bg, sw, sh, r) }
+
+        val px = IntArray(w * h)
+        src.getPixels(px, 0, w, 0, 0, w, h)
+        val mw = mask.width
+        val mh = mask.height
+        parallelRows(h) { y0, y1 ->
+            for (y in y0 until y1) {
+                val my = (y + 0.5f) * mh / h - 0.5f
+                val sy = (y + 0.5f) * sh / h - 0.5f
+                for (x in 0 until w) {
+                    val m = bilinear(mask.values, mw, mh, (x + 0.5f) * mw / w - 0.5f, my)
+                    val t = ((m - 0.35f) / 0.4f).coerceIn(0f, 1f)
+                    val fg = t * t * (3 - 2 * t)
+                    if (fg >= 0.999f) continue
+                    val b = sampleArgb(bg, sw, sh, (x + 0.5f) * sw / w - 0.5f, sy)
+                    val c = px[y * w + x]
+                    val k = fg
+                    val rr = (((c shr 16) and 0xFF) * k + ((b shr 16) and 0xFF) * (1 - k)).toInt()
+                    val gg = (((c shr 8) and 0xFF) * k + ((b shr 8) and 0xFF) * (1 - k)).toInt()
+                    val bb = ((c and 0xFF) * k + (b and 0xFF) * (1 - k)).toInt()
+                    px[y * w + x] = (0xFF shl 24) or (rr shl 16) or (gg shl 8) or bb
+                }
+            }
+        }
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        out.setPixels(px, 0, w, 0, 0, w, h)
+        return out
+    }
+
+    private fun bilinear(a: FloatArray, w: Int, h: Int, fx: Float, fy: Float): Float {
+        val x = fx.coerceIn(0f, (w - 1).toFloat())
+        val y = fy.coerceIn(0f, (h - 1).toFloat())
+        val x0 = x.toInt().coerceAtMost(w - 2).coerceAtLeast(0)
+        val y0 = y.toInt().coerceAtMost(h - 2).coerceAtLeast(0)
+        val x1 = minOf(x0 + 1, w - 1)
+        val y1 = minOf(y0 + 1, h - 1)
+        val tx = x - x0
+        val ty = y - y0
+        val top = a[y0 * w + x0] + (a[y0 * w + x1] - a[y0 * w + x0]) * tx
+        val bot = a[y1 * w + x0] + (a[y1 * w + x1] - a[y1 * w + x0]) * tx
+        return top + (bot - top) * ty
+    }
+
+    private fun sampleArgb(a: IntArray, w: Int, h: Int, fx: Float, fy: Float): Int {
+        val x = fx.coerceIn(0f, (w - 1).toFloat())
+        val y = fy.coerceIn(0f, (h - 1).toFloat())
+        val x0 = x.toInt().coerceAtMost(w - 2).coerceAtLeast(0)
+        val y0 = y.toInt().coerceAtMost(h - 2).coerceAtLeast(0)
+        val tx = x - x0
+        val ty = y - y0
+        val c00 = a[y0 * w + x0]
+        val c10 = a[y0 * w + x0 + 1]
+        val c01 = a[(y0 + 1) * w + x0]
+        val c11 = a[(y0 + 1) * w + x0 + 1]
+        var out = 0xFF shl 24
+        for (shift in intArrayOf(16, 8, 0)) {
+            val top = ((c00 shr shift) and 0xFF) + (((c10 shr shift) and 0xFF) - ((c00 shr shift) and 0xFF)) * tx
+            val bot = ((c01 shr shift) and 0xFF) + (((c11 shr shift) and 0xFF) - ((c01 shr shift) and 0xFF)) * tx
+            out = out or ((top + (bot - top) * ty).toInt().coerceIn(0, 255) shl shift)
+        }
+        return out
+    }
+
+    private fun boxBlurArgb(a: IntArray, w: Int, h: Int, r: Int) {
+        for (horizontal in booleanArrayOf(true, false)) {
+            val len = if (horizontal) w else h
+            val lines = if (horizontal) h else w
+            val tmp = IntArray(len)
+            for (line in 0 until lines) {
+                fun at(i: Int) = if (horizontal) line * w + i else i * w + line
+                var sr = 0; var sg = 0; var sb = 0
+                for (i in -r..r) {
+                    val c = a[at(i.coerceIn(0, len - 1))]
+                    sr += (c shr 16) and 0xFF; sg += (c shr 8) and 0xFF; sb += c and 0xFF
+                }
+                val n = 2 * r + 1
+                for (i in 0 until len) {
+                    tmp[i] = (0xFF shl 24) or ((sr / n) shl 16) or ((sg / n) shl 8) or (sb / n)
+                    val add = a[at((i + r + 1).coerceAtMost(len - 1))]
+                    val rem = a[at((i - r).coerceAtLeast(0))]
+                    sr += ((add shr 16) and 0xFF) - ((rem shr 16) and 0xFF)
+                    sg += ((add shr 8) and 0xFF) - ((rem shr 8) and 0xFF)
+                    sb += (add and 0xFF) - (rem and 0xFF)
+                }
+                for (i in 0 until len) a[at(i)] = tmp[i]
+            }
+        }
+    }
+
     // ---------------- Local tone mapping ----------------
 
     private class GainField(val cw: Int, val ch: Int, val gain: FloatArray)

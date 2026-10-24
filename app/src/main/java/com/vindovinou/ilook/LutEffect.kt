@@ -26,6 +26,9 @@ import java.util.concurrent.Executor
  * CameraX effect that renders camera frames through the iPhone-look 3D LUT on the GPU.
  * [targets] is PREVIEW, or PREVIEW | VIDEO_CAPTURE so recorded video gets the same look.
  * Several effects can share one [LutSurfaceProcessor]; only one is bound at a time.
+ *
+ * In Portrait and Cinematic modes the processor also blurs the background, using the latest
+ * person mask from [setMask] (computed on an analysis stream, so it trails by a frame or two).
  */
 class LutEffect(
     targets: Int,
@@ -46,8 +49,20 @@ class LutSurfaceProcessor(initialLut: Lut3D) : SurfaceProcessor {
     private var program = 0
     private var oesTex = 0
     private var lutTex = 0
+    private var maskTex = 0
     private var uTexMatrix = 0
+    private var uBlur = 0
+    private var uMaskRot = 0
+    private var uRadius = 0
     private var pendingLut: Lut3D? = initialLut
+    private var blur = false
+    private var blurRadius = 0.02f
+    private var pendingMask: Mask? = null
+    private var maskRotation = 0
+    private var hasMask = false
+
+    /** Foreground confidence (0..255), upright: the camera buffer rotated by [rotation] degrees. */
+    class Mask(val bytes: ByteBuffer, val width: Int, val height: Int, val rotation: Int)
 
     private var surfaceTexture: SurfaceTexture? = null
     private val outputs = LinkedHashMap<SurfaceOutput, EGLSurface>()
@@ -67,6 +82,15 @@ class LutSurfaceProcessor(initialLut: Lut3D) : SurfaceProcessor {
     }
 
     fun setLut(lut: Lut3D) = handler.post { pendingLut = lut }
+
+    /** Turns the background blur on or off; [radius] is a fraction of the frame. */
+    fun setBlur(enabled: Boolean, radius: Float = 0.02f) = handler.post {
+        blur = enabled
+        blurRadius = radius
+        if (!enabled) hasMask = false
+    }
+
+    fun setMask(mask: Mask) = handler.post { pendingMask = mask }
 
     fun release() = handler.post {
         released = true
@@ -124,6 +148,7 @@ class LutSurfaceProcessor(initialLut: Lut3D) : SurfaceProcessor {
         EGL14.eglMakeCurrent(eglDisplay, pbuffer, pbuffer, eglContext)
         st.updateTexImage()
         uploadPendingLut()
+        uploadPendingMask()
         st.getTransformMatrix(stMatrix)
         for ((out, eglSurface) in outputs) {
             EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
@@ -131,10 +156,15 @@ class LutSurfaceProcessor(initialLut: Lut3D) : SurfaceProcessor {
             GLES30.glViewport(0, 0, out.size.width, out.size.height)
             GLES30.glUseProgram(program)
             GLES30.glUniformMatrix4fv(uTexMatrix, 1, false, outMatrix, 0)
+            GLES30.glUniform1f(uBlur, if (blur && hasMask) 1f else 0f)
+            GLES30.glUniform1i(uMaskRot, maskRotation)
+            GLES30.glUniform1f(uRadius, blurRadius)
             GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
             GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTex)
             GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTex)
+            GLES30.glActiveTexture(GLES30.GL_TEXTURE2)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, maskTex)
             GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
             EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, st.timestamp)
             EGL14.eglSwapBuffers(eglDisplay, eglSurface)
@@ -151,6 +181,21 @@ class LutSurfaceProcessor(initialLut: Lut3D) : SurfaceProcessor {
             GLES30.GL_TEXTURE_3D, 0, GLES30.GL_RGB8, lut.size, lut.size, lut.size, 0,
             GLES30.GL_RGB, GLES30.GL_UNSIGNED_BYTE, buf,
         )
+    }
+
+    private fun uploadPendingMask() {
+        val m = pendingMask ?: return
+        pendingMask = null
+        if (!blur) return
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, maskTex)
+        GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1)
+        m.bytes.position(0)
+        GLES30.glTexImage2D(
+            GLES30.GL_TEXTURE_2D, 0, GLES30.GL_R8, m.width, m.height, 0,
+            GLES30.GL_RED, GLES30.GL_UNSIGNED_BYTE, m.bytes,
+        )
+        maskRotation = m.rotation
+        hasMask = true
     }
 
     private fun initGl() {
@@ -182,6 +227,10 @@ class LutSurfaceProcessor(initialLut: Lut3D) : SurfaceProcessor {
         GLES30.glUseProgram(program)
         GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uTex"), 0)
         GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uLut"), 1)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uMask"), 2)
+        uBlur = GLES30.glGetUniformLocation(program, "uBlur")
+        uMaskRot = GLES30.glGetUniformLocation(program, "uMaskRot")
+        uRadius = GLES30.glGetUniformLocation(program, "uRadius")
 
         val stride = 4 * 4
         quad.position(0)
@@ -192,10 +241,16 @@ class LutSurfaceProcessor(initialLut: Lut3D) : SurfaceProcessor {
         GLES30.glEnableVertexAttribArray(1)
         quad.position(0)
 
-        val tex = IntArray(2)
-        GLES30.glGenTextures(2, tex, 0)
+        val tex = IntArray(3)
+        GLES30.glGenTextures(3, tex, 0)
         oesTex = tex[0]
         lutTex = tex[1]
+        maskTex = tex[2]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, maskTex)
+        for ((k, v) in listOf(
+            GLES30.GL_TEXTURE_MIN_FILTER to GLES30.GL_LINEAR, GLES30.GL_TEXTURE_MAG_FILTER to GLES30.GL_LINEAR,
+            GLES30.GL_TEXTURE_WRAP_S to GLES30.GL_CLAMP_TO_EDGE, GLES30.GL_TEXTURE_WRAP_T to GLES30.GL_CLAMP_TO_EDGE,
+        )) GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, k, v)
         GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTex)
         GLES30.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
         GLES30.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
@@ -246,11 +301,40 @@ precision mediump float;
 precision mediump sampler3D;
 uniform samplerExternalOES uTex;
 uniform sampler3D uLut;
+uniform sampler2D uMask;
+uniform float uBlur;
+uniform int uMaskRot;
+uniform float uRadius;
 in vec2 vUv;
 out vec4 fragColor;
 const float N = 33.0;
+const int TAPS = 24;
+
+// Camera buffer coordinates -> upright mask coordinates.
+vec2 maskUv(vec2 uv) {
+    if (uMaskRot == 90) return vec2(1.0 - uv.y, uv.x);
+    if (uMaskRot == 180) return vec2(1.0 - uv.x, 1.0 - uv.y);
+    if (uMaskRot == 270) return vec2(uv.y, 1.0 - uv.x);
+    return uv;
+}
+
 void main() {
-    vec3 c = clamp(texture(uTex, vUv).rgb, 0.0, 1.0);
+    vec3 c = texture(uTex, vUv).rgb;
+    if (uBlur > 0.5) {
+        float fg = texture(uMask, maskUv(vUv)).r;
+        float bg = 1.0 - smoothstep(0.35, 0.75, fg);
+        if (bg > 0.01) {
+            // Golden-angle disc: a cheap, round bokeh-like blur.
+            vec3 acc = vec3(0.0);
+            for (int i = 0; i < TAPS; i++) {
+                float a = float(i) * 2.39996;
+                float r = sqrt((float(i) + 0.5) / float(TAPS)) * uRadius;
+                acc += texture(uTex, vUv + vec2(cos(a), sin(a)) * r).rgb;
+            }
+            c = mix(c, acc / float(TAPS), bg);
+        }
+    }
+    c = clamp(c, 0.0, 1.0);
     vec3 lc = c * ((N - 1.0) / N) + 0.5 / N;
     fragColor = vec4(texture(uLut, lc).rgb, 1.0);
 }

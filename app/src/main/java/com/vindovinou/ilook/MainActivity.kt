@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import android.util.Range
 import android.util.Size
 import android.util.TypedValue
 import android.view.GestureDetector
@@ -24,6 +25,7 @@ import android.view.OrientationEventListener
 import android.view.ScaleGestureDetector
 import android.view.Surface
 import android.view.View
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.SeekBar
@@ -37,7 +39,9 @@ import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraEffect
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.DynamicRange
 import androidx.camera.core.FocusMeteringAction
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
@@ -47,8 +51,11 @@ import androidx.camera.core.UseCaseGroup
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
+import androidx.camera.extensions.ExtensionMode
+import androidx.camera.extensions.ExtensionsManager
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FallbackStrategy
+import androidx.camera.video.HighSpeedVideoSessionConfig
 import androidx.camera.video.MediaStoreOutputOptions
 import androidx.camera.video.Quality
 import androidx.camera.video.QualitySelector
@@ -69,13 +76,22 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 class MainActivity : AppCompatActivity() {
 
-    private enum class Mode { VIDEO, PHOTO }
+    /** Modes in iPhone order. */
+    private enum class Mode(val label: String, val isVideo: Boolean) {
+        TIMELAPSE("TIME-LAPSE", true),
+        SLOMO("RALENTI", true),
+        CINEMATIC("CINÉMATIQUE", true),
+        VIDEO("VIDÉO", true),
+        PHOTO("PHOTO", false),
+        PORTRAIT("PORTRAIT", false),
+    }
 
     /** Photo formats, as long side : short side. */
     private enum class Format(val label: String, val ratio: Float, val viewRatio: String) {
@@ -90,16 +106,24 @@ class MainActivity : AppCompatActivity() {
     private val prefs by lazy { getSharedPreferences("ilook", MODE_PRIVATE) }
 
     private var cameraProvider: ProcessCameraProvider? = null
+    private var extensions: ExtensionsManager? = null
     private var camera: Camera? = null
     private var imageCapture: ImageCapture? = null
     private var videoCapture: VideoCapture<Recorder>? = null
     private var recording: Recording? = null
     private var quickTake = false
+    private var timeLapse: TimeLapseRecorder? = null
+    private var liveSegmenter: PersonSegmenter.Live? = null
+    private val analysisExecutor = Executors.newSingleThreadExecutor()
 
     private var processor: LutSurfaceProcessor? = null
     private var lut: Lut3D? = null
 
     private var mode = Mode.PHOTO
+    private var availableModes = listOf(Mode.TIMELAPSE, Mode.CINEMATIC, Mode.VIDEO, Mode.PHOTO, Mode.PORTRAIT)
+    private var slowMoFps = 0
+    private var nightAvailable = false
+    private var night = false
     private var lensFacing = CameraSelector.LENS_FACING_BACK
     private var flashMode = ImageCapture.FLASH_MODE_AUTO
     private var torch = false
@@ -114,6 +138,7 @@ class MainActivity : AppCompatActivity() {
     private var countingDown = false
     private var uiRotation = 0f
     private var surfaceRotation = Surface.ROTATION_0
+    private var tlStartedAt = 0L
 
     private val sound = MediaActionSound()
 
@@ -121,6 +146,9 @@ class MainActivity : AppCompatActivity() {
     private val zoomStops = listOf(0.5f to ".5", 1f to "1×", 2f to "2", 4f to "4", 8f to "8")
     private val zoomViews = mutableListOf<TextView>()
     private val trayViews = mutableMapOf<TrayItem, Pair<ImageView, TextView>>()
+    private val modeViews = mutableMapOf<Mode, TextView>()
+
+    private val isRecording get() = recording != null || timeLapse?.isRecording == true
 
     private val cameraPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -179,6 +207,7 @@ class MainActivity : AppCompatActivity() {
 
         buildZoomBar()
         buildTray()
+        buildModeBar()
         setupShutter()
         setupGestures()
         b.flipButton.setOnClickListener {
@@ -186,9 +215,16 @@ class MainActivity : AppCompatActivity() {
             lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) CameraSelector.LENS_FACING_FRONT
             else CameraSelector.LENS_FACING_BACK
             b.flipButton.animate().rotationBy(180f).setDuration(250).start()
+            refreshCapabilities()
             bindCamera()
         }
         b.flashButton.setOnClickListener { haptic(it); cycleFlash() }
+        b.nightButton.setOnClickListener {
+            haptic(it)
+            night = !night
+            showInfo(if (night) "Mode Nuit activé" else "Mode Nuit désactivé")
+            bindCamera()
+        }
         b.hdrButton.setOnClickListener {
             haptic(it)
             hdr = !hdr
@@ -197,8 +233,6 @@ class MainActivity : AppCompatActivity() {
             showInfo(if (hdr) "Smart HDR activé" else "Smart HDR désactivé")
         }
         b.chevronButton.setOnClickListener { haptic(it); toggleTray() }
-        b.modeVideo.setOnClickListener { setMode(Mode.VIDEO) }
-        b.modePhoto.setOnClickListener { setMode(Mode.PHOTO) }
         b.thumbnail.setOnClickListener { openLast() }
         b.exposureSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
@@ -213,7 +247,6 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar) {}
         })
         refreshUi()
-        b.modeBar.post { centerMode(animate = false) }
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCamera()
@@ -236,6 +269,9 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         processor?.release()
+        timeLapse?.release()
+        liveSegmenter?.close()
+        analysisExecutor.shutdown()
         sound.release()
     }
 
@@ -253,13 +289,48 @@ class MainActivity : AppCompatActivity() {
     private fun startCamera() {
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
-            cameraProvider = future.get()
-            bindCamera()
+            val provider = future.get()
+            cameraProvider = provider
+            val ext = ExtensionsManager.getInstanceAsync(this, provider)
+            ext.addListener({
+                extensions = runCatching { ext.get() }.getOrNull()
+                refreshCapabilities()
+                bindCamera()
+            }, ContextCompat.getMainExecutor(this))
         }, ContextCompat.getMainExecutor(this))
     }
 
+    private val baseSelector get() = CameraSelector.Builder().requireLensFacing(lensFacing).build()
+
+    /** Works out which modes this lens really supports (slow motion, Samsung night mode). */
+    private fun refreshCapabilities() {
+        val provider = cameraProvider ?: return
+        nightAvailable = runCatching { extensions?.isExtensionAvailable(baseSelector, ExtensionMode.NIGHT) == true }
+            .getOrDefault(false)
+        if (!nightAvailable) night = false
+        slowMoFps = runCatching { detectSlowMoFps(provider) }.onFailure { Log.w(TAG, "Slow-mo probe failed", it) }
+            .getOrDefault(0)
+        availableModes = Mode.entries.filter { it != Mode.SLOMO || slowMoFps > 0 }
+        if (mode !in availableModes) mode = Mode.PHOTO
+        buildModeBar()
+    }
+
+    private fun detectSlowMoFps(provider: ProcessCameraProvider): Int {
+        val info = provider.getCameraInfo(baseSelector)
+        val caps = Recorder.getHighSpeedVideoCapabilities(info) ?: return 0
+        val qualities = caps.getSupportedQualities(DynamicRange.SDR)
+        if (qualities.isEmpty()) return 0
+        val probe = HighSpeedVideoSessionConfig(
+            VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(qualities.first())).build()),
+            Preview.Builder().build(),
+        )
+        return info.getSupportedFrameRateRanges(probe)
+            .filter { it.lower == it.upper && it.upper >= 120 }
+            .maxOfOrNull { it.upper } ?: 0
+    }
+
     @OptIn(ExperimentalCamera2Interop::class)
-    private fun buildImageCapture(): ImageCapture {
+    private fun buildImageCapture(interop: Boolean = true): ImageCapture {
         val builder = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
             .setFlashMode(flashMode)
@@ -278,74 +349,171 @@ class MainActivity : AppCompatActivity() {
                     )
                     .build(),
             )
-        // Ask the ISP for clean, un-oversharpened frames; our own pipeline adds Apple-like detail.
-        Camera2Interop.Extender(builder)
-            .setCaptureRequestOption(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_OFF)
-            .setCaptureRequestOption(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY)
+        if (interop) {
+            // Ask the ISP for clean, un-oversharpened frames; our own pipeline adds Apple-like detail.
+            Camera2Interop.Extender(builder)
+                .setCaptureRequestOption(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_OFF)
+                .setCaptureRequestOption(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY)
+        }
         return builder.build()
     }
 
-    private fun buildVideoCapture(): VideoCapture<Recorder> {
+    private fun buildVideoCapture(fps: Range<Int>? = null): VideoCapture<Recorder> {
         // iPhone default: 1080p.
         val recorder = Recorder.Builder()
             .setQualitySelector(QualitySelector.from(Quality.FHD, FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD)))
             .build()
-        return VideoCapture.Builder(recorder).setTargetRotation(surfaceRotation).build()
+        return VideoCapture.Builder(recorder).setTargetRotation(surfaceRotation)
+            .apply { fps?.let { setTargetFrameRate(it) } }
+            .build()
     }
+
+    private fun buildPreview(aspect: AspectRatioStrategy, fps: Range<Int>? = null): Preview =
+        Preview.Builder()
+            .setResolutionSelector(ResolutionSelector.Builder().setAspectRatioStrategy(aspect).build())
+            .apply { fps?.let { setTargetFrameRate(it) } }
+            .build()
+            .also { it.surfaceProvider = b.previewView.surfaceProvider }
+
+    private fun buildAnalysis(aspect: AspectRatioStrategy, size: Size, rgba: Boolean, analyzer: ImageAnalysis.Analyzer) =
+        ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .apply { if (rgba) setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888) }
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(aspect)
+                    .setResolutionStrategy(ResolutionStrategy(size, ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER))
+                    .build(),
+            )
+            .build()
+            .also { it.setAnalyzer(analysisExecutor, analyzer) }
+
+    private fun liveSegmenter(): PersonSegmenter.Live =
+        liveSegmenter ?: PersonSegmenter.Live { processor?.setMask(it) }.also { liveSegmenter = it }
+
+    private fun timeLapse(): TimeLapseRecorder =
+        timeLapse ?: TimeLapseRecorder(this, { lut!! }).also { timeLapse = it }
 
     private fun bindCamera() {
         val provider = cameraProvider ?: return
         val proc = processor ?: return
-        val aspect = if (mode == Mode.VIDEO) AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
-        else AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
-        val preview = Preview.Builder()
-            .setResolutionSelector(ResolutionSelector.Builder().setAspectRatioStrategy(aspect).build())
-            .build()
-            .also { it.surfaceProvider = b.previewView.surfaceProvider }
+        val r43 = AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
+        val r169 = AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
         val previewOnly = LutEffect(CameraEffect.PREVIEW, proc)
         val previewAndVideo = LutEffect(CameraEffect.PREVIEW or CameraEffect.VIDEO_CAPTURE, proc)
+        proc.setBlur(mode == Mode.PORTRAIT || mode == Mode.CINEMATIC, if (mode == Mode.CINEMATIC) 0.018f else 0.024f)
 
-        // Most capable configuration first, then simpler fallbacks.
-        val attempts: List<() -> Pair<List<UseCase>, CameraEffect?>> = if (mode == Mode.PHOTO) {
-            listOf(
-                { Pair(listOf(preview, buildImageCapture(), buildVideoCapture()), previewAndVideo) },
-                { Pair(listOf(preview, buildImageCapture()), previewOnly) },
-                { Pair(listOf(preview, buildImageCapture()), null) },
-            )
-        } else {
-            listOf(
-                { Pair(listOf(preview, buildVideoCapture()), previewAndVideo) },
-                { Pair(listOf(preview, buildVideoCapture()), null) },
-            )
-        }
-
-        val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
         imageCapture = null
         videoCapture = null
-        for (attempt in attempts) {
-            val (useCases, effect) = attempt()
+        provider.unbindAll()
+
+        if (mode == Mode.SLOMO) {
+            bindSlowMo(provider)
+        } else if (mode == Mode.PHOTO && night && nightAvailable && extensions != null) {
+            // Samsung's night processing; the extension doesn't allow our GPU effect on preview.
+            val selector = extensions!!.getExtensionEnabledCameraSelector(baseSelector, ExtensionMode.NIGHT)
+            val capture = buildImageCapture(interop = false)
             try {
-                provider.unbindAll()
-                val group = UseCaseGroup.Builder().apply {
-                    useCases.forEach { addUseCase(it) }
-                    effect?.let { addEffect(it) }
-                }.build()
-                camera = provider.bindToLifecycle(this, selector, group)
-                @Suppress("UNCHECKED_CAST")
-                useCases.forEach {
-                    when (it) {
-                        is ImageCapture -> imageCapture = it
-                        is VideoCapture<*> -> videoCapture = it as VideoCapture<Recorder>
-                    }
-                }
-                break
+                camera = provider.bindToLifecycle(this, selector, buildPreview(r43), capture)
+                imageCapture = capture
             } catch (e: Exception) {
-                Log.w(TAG, "Bind attempt failed, trying a simpler configuration", e)
+                Log.w(TAG, "Night bind failed", e)
+                night = false
+                bindCamera()
+                return
+            }
+        } else {
+            // Most capable configuration first, then simpler fallbacks.
+            val fps24 = Range(24, 24)
+            val attempts: List<() -> Pair<List<UseCase>, CameraEffect?>> = when (mode) {
+                Mode.PHOTO -> listOf(
+                    { listOf(buildPreview(r43), buildImageCapture(), buildVideoCapture()) to previewAndVideo },
+                    { listOf(buildPreview(r43), buildImageCapture()) to previewOnly },
+                    { listOf(buildPreview(r43), buildImageCapture()) to null },
+                )
+                Mode.PORTRAIT -> listOf(
+                    {
+                        listOf(
+                            buildPreview(r43), buildImageCapture(),
+                            buildAnalysis(r43, Size(640, 480), false, liveSegmenter()),
+                        ) to previewOnly
+                    },
+                    { listOf(buildPreview(r43), buildImageCapture()) to previewOnly },
+                    { listOf(buildPreview(r43), buildImageCapture()) to null },
+                )
+                Mode.CINEMATIC -> listOf(
+                    {
+                        listOf(
+                            buildPreview(r169, fps24), buildVideoCapture(fps24),
+                            buildAnalysis(r169, Size(640, 360), false, liveSegmenter()),
+                        ) to previewAndVideo
+                    },
+                    {
+                        listOf(
+                            buildPreview(r169), buildVideoCapture(),
+                            buildAnalysis(r169, Size(640, 360), false, liveSegmenter()),
+                        ) to previewAndVideo
+                    },
+                    { listOf(buildPreview(r169), buildVideoCapture()) to previewAndVideo },
+                )
+                Mode.TIMELAPSE -> listOf(
+                    { listOf(buildPreview(r169), buildAnalysis(r169, Size(1920, 1080), true, timeLapse())) to previewOnly },
+                    { listOf(buildPreview(r169), buildAnalysis(r169, Size(1280, 720), true, timeLapse())) to null },
+                )
+                else -> listOf(
+                    { listOf(buildPreview(r169), buildVideoCapture()) to previewAndVideo },
+                    { listOf(buildPreview(r169), buildVideoCapture()) to null },
+                )
+            }
+            for (attempt in attempts) {
+                val (useCases, effect) = attempt()
+                try {
+                    provider.unbindAll()
+                    val group = UseCaseGroup.Builder().apply {
+                        useCases.forEach { addUseCase(it) }
+                        effect?.let { addEffect(it) }
+                    }.build()
+                    camera = provider.bindToLifecycle(this, baseSelector, group)
+                    @Suppress("UNCHECKED_CAST")
+                    useCases.forEach {
+                        when (it) {
+                            is ImageCapture -> imageCapture = it
+                            is VideoCapture<*> -> videoCapture = it as VideoCapture<Recorder>
+                        }
+                    }
+                    break
+                } catch (e: Exception) {
+                    Log.w(TAG, "Bind attempt failed for $mode, trying a simpler configuration", e)
+                }
             }
         }
         camera?.cameraInfo?.zoomState?.observe(this) { updateZoomBar(it.zoomRatio) }
-        if (mode == Mode.VIDEO && torch) camera?.cameraControl?.enableTorch(true)
+        if (mode.isVideo && torch) camera?.cameraControl?.enableTorch(true)
         refreshUi()
+    }
+
+    private fun bindSlowMo(provider: ProcessCameraProvider) {
+        try {
+            val info = provider.getCameraInfo(baseSelector)
+            val quality = Recorder.getHighSpeedVideoCapabilities(info)!!.getSupportedQualities(DynamicRange.SDR)
+                .let { q -> if (Quality.FHD in q) Quality.FHD else q.first() }
+            val vc = VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(quality)).build())
+            val preview = buildPreview(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+            val config = HighSpeedVideoSessionConfig.Builder(vc)
+                .setPreview(preview)
+                .setFrameRateRange(Range(slowMoFps, slowMoFps))
+                .setSlowMotionEnabled(true)
+                .build()
+            camera = provider.bindToLifecycle(this, baseSelector, config)
+            videoCapture = vc
+            vc.targetRotation = surfaceRotation
+        } catch (e: Exception) {
+            Log.w(TAG, "Slow motion bind failed", e)
+            Toast.makeText(this, "Ralenti indisponible sur cette caméra", Toast.LENGTH_SHORT).show()
+            mode = Mode.VIDEO
+            buildModeBar()
+            bindCamera()
+        }
     }
 
     // ---------------- Shutter ----------------
@@ -383,7 +551,7 @@ class MainActivity : AppCompatActivity() {
     private fun onShutterTap() {
         haptic(b.shutterButton)
         when {
-            mode == Mode.VIDEO -> if (recording == null) startRecording() else stopRecording()
+            mode.isVideo -> if (isRecording) stopRecording() else startRecording()
             countingDown -> Unit
             timerSeconds > 0 -> lifecycleScope.launch {
                 countingDown = true
@@ -413,7 +581,8 @@ class MainActivity : AppCompatActivity() {
 
         val currentLut = lut!!
         val useHdr = hdr
-        val ratio = format.ratio
+        val portrait = mode == Mode.PORTRAIT
+        val ratio = if (portrait) Format.R4_3.ratio else format.ratio
         capture.takePicture(ContextCompat.getMainExecutor(this), object : ImageCapture.OnImageCapturedCallback() {
             override fun onCaptureSuccess(image: ImageProxy) {
                 val bytes = image.planes[0].buffer.let { buf -> ByteArray(buf.remaining()).also { buf.get(it) } }
@@ -423,12 +592,22 @@ class MainActivity : AppCompatActivity() {
                     try {
                         val (uri, thumb) = withContext(Dispatchers.Default) {
                             val (upright, exif) = PhotoSaver.decodeUpright(bytes, rotation)
-                            val framed = PhotoSaver.cropToRatio(upright, ratio)
-                            if (framed !== upright) upright.recycle()
-                            val out = ImageProcessor.process(framed, currentLut, useHdr)
-                            framed.recycle()
+                            var work = PhotoSaver.cropToRatio(upright, ratio)
+                            if (work !== upright) upright.recycle()
+                            if (portrait) {
+                                val blurred = runCatching {
+                                    ImageProcessor.portrait(work, PersonSegmenter.segment(work))
+                                }.onFailure { Log.w(TAG, "Portrait blur failed", it) }.getOrNull()
+                                if (blurred != null) {
+                                    work.recycle()
+                                    work = blurred
+                                }
+                            }
+                            val out = ImageProcessor.process(work, currentLut, useHdr)
+                            work.recycle()
+                            val label = if (portrait) "Portrait, ${currentLut.style.label}" else currentLut.style.label
                             val uri = withContext(Dispatchers.IO) {
-                                PhotoSaver.save(this@MainActivity, out, exif, currentLut.style.label)
+                                PhotoSaver.save(this@MainActivity, out, exif, label)
                             }
                             val thumb = Bitmap.createScaledBitmap(out, 160, 160 * out.height / out.width, true)
                             out.recycle()
@@ -463,8 +642,28 @@ class MainActivity : AppCompatActivity() {
 
     // ---------------- Video ----------------
 
-    @SuppressLint("MissingPermission")
     private fun startRecording() {
+        if (mode == Mode.TIMELAPSE) {
+            val tl = timeLapse ?: return
+            sound.play(MediaActionSound.START_VIDEO_RECORDING)
+            tl.start(landscape = surfaceRotation == Surface.ROTATION_90 || surfaceRotation == Surface.ROTATION_270)
+            tlStartedAt = System.currentTimeMillis()
+            tickTimeLapse()
+            refreshUi()
+            return
+        }
+        startVideoRecording()
+    }
+
+    private fun tickTimeLapse() {
+        if (timeLapse?.isRecording != true) return
+        val s = (System.currentTimeMillis() - tlStartedAt) / 1000
+        b.recTimer.text = String.format(Locale.US, "%02d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60)
+        b.recTimer.postDelayed({ tickTimeLapse() }, 500)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startVideoRecording() {
         val vc = videoCapture ?: return
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, "ILK_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".mp4")
@@ -474,7 +673,7 @@ class MainActivity : AppCompatActivity() {
         val options = MediaStoreOutputOptions.Builder(contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
             .setContentValues(values)
             .build()
-        val audio = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+        val audio = mode != Mode.SLOMO && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
         sound.play(MediaActionSound.START_VIDEO_RECORDING)
         recording = vc.output.prepareRecording(this, options)
@@ -490,14 +689,7 @@ class MainActivity : AppCompatActivity() {
                             Log.e(TAG, "Recording error ${event.error}", event.cause)
                             Toast.makeText(this, R.string.save_failed, Toast.LENGTH_SHORT).show()
                         } else {
-                            val uri = event.outputResults.outputUri
-                            lastUri = uri
-                            lifecycleScope.launch {
-                                val thumb = withContext(Dispatchers.IO) {
-                                    runCatching { contentResolver.loadThumbnail(uri, Size(160, 160), null) }.getOrNull()
-                                }
-                                thumb?.let { b.thumbnail.setImageBitmap(it) }
-                            }
+                            showVideoThumbnail(event.outputResults.outputUri)
                         }
                     }
                 }
@@ -506,7 +698,24 @@ class MainActivity : AppCompatActivity() {
         refreshUi()
     }
 
+    private fun showVideoThumbnail(uri: Uri) {
+        lastUri = uri
+        lifecycleScope.launch {
+            val thumb = withContext(Dispatchers.IO) {
+                runCatching { contentResolver.loadThumbnail(uri, Size(160, 160), null) }.getOrNull()
+            }
+            thumb?.let { b.thumbnail.setImageBitmap(it) }
+        }
+    }
+
     private fun stopRecording() {
+        val tl = timeLapse
+        if (tl?.isRecording == true) {
+            tl.stop { uri -> uri?.let { showVideoThumbnail(it) } }
+            sound.play(MediaActionSound.STOP_VIDEO_RECORDING)
+            refreshUi()
+            return
+        }
         val r = recording ?: return
         recording = null
         quickTake = false
@@ -518,10 +727,10 @@ class MainActivity : AppCompatActivity() {
     // ---------------- Modes & tray ----------------
 
     private fun setMode(m: Mode) {
-        if (m == mode || recording != null || countingDown) return
+        if (m == mode || m !in availableModes || isRecording || countingDown) return
         haptic(b.modeBar)
         mode = m
-        if (m == Mode.VIDEO &&
+        if (m.isVideo && m != Mode.TIMELAPSE &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
         ) {
             audioPermission.launch(Manifest.permission.RECORD_AUDIO)
@@ -531,16 +740,58 @@ class MainActivity : AppCompatActivity() {
         bindCamera()
     }
 
-    private fun centerMode(animate: Boolean) {
-        val target = if (mode == Mode.VIDEO) b.modeVideo else b.modePhoto
-        val barCenter = b.modeBar.width / 2f
-        val dx = barCenter - (target.left + target.width / 2f)
-        if (animate) b.modeBar.animate().translationX(dx).setDuration(200).start() else b.modeBar.translationX = dx
+    private fun stepMode(delta: Int) {
+        val i = availableModes.indexOf(mode)
+        availableModes.getOrNull(i + delta)?.let { setMode(it) }
     }
 
-    private fun trayItemsForMode() =
-        if (mode == Mode.VIDEO) listOf(TrayItem.FLASH, TrayItem.EXPOSURE, TrayItem.GRID)
-        else TrayItem.entries.toList()
+    private fun buildModeBar() {
+        b.modeBar.removeAllViews()
+        modeViews.clear()
+        var total = 0
+        for (m in availableModes) {
+            val tv = TextView(this, null, 0, R.style.ModeLabel).apply {
+                text = m.label
+                setOnClickListener { setMode(m) }
+            }
+            tv.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+            total += tv.measuredWidth
+            b.modeBar.addView(tv, LinearLayout.LayoutParams(tv.measuredWidth, LinearLayout.LayoutParams.WRAP_CONTENT))
+            modeViews[m] = tv
+        }
+        // Wider than the screen: lay it out at full width and slide it so the mode is centred.
+        b.modeBar.layoutParams = (b.modeBar.layoutParams as FrameLayout.LayoutParams).apply {
+            width = total
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        }
+        b.modeArea.post { centerMode(animate = false) }
+        refreshModeColors()
+    }
+
+    private fun centerMode(animate: Boolean) {
+        var offset = 0
+        for (m in availableModes) {
+            val w = modeViews[m]?.layoutParams?.width ?: 0
+            if (m == mode) {
+                val dx = b.modeArea.width / 2f - (offset + w / 2f)
+                if (animate) b.modeBar.animate().translationX(dx).setDuration(200).start() else b.modeBar.translationX = dx
+                break
+            }
+            offset += w
+        }
+        refreshModeColors()
+    }
+
+    private fun refreshModeColors() {
+        for ((m, tv) in modeViews) tv.setTextColor(getColor(if (m == mode) R.color.ios_yellow else R.color.white))
+    }
+
+    private fun trayItemsForMode() = when (mode) {
+        Mode.PHOTO -> TrayItem.entries.toList()
+        Mode.PORTRAIT -> listOf(TrayItem.FLASH, TrayItem.TIMER, TrayItem.EXPOSURE, TrayItem.STYLES, TrayItem.GRID)
+        Mode.TIMELAPSE -> listOf(TrayItem.EXPOSURE, TrayItem.GRID)
+        else -> listOf(TrayItem.FLASH, TrayItem.EXPOSURE, TrayItem.GRID)
+    }
 
     private fun buildTray() {
         val icons = mapOf(
@@ -579,7 +830,7 @@ class MainActivity : AppCompatActivity() {
     private fun toggleTray() = if (b.tray.visibility == View.VISIBLE) closeTray() else openTray()
 
     private fun openTray() {
-        if (recording != null) return
+        if (isRecording) return
         val visible = trayItemsForMode()
         for ((item, views) in trayViews) (views.first.parent as View).visibility =
             if (item in visible) View.VISIBLE else View.GONE
@@ -595,19 +846,16 @@ class MainActivity : AppCompatActivity() {
         openTrayItem = null
         b.optionsRow.visibility = View.INVISIBLE
         b.tray.visibility = View.GONE
-        b.modeBar.visibility = if (recording == null) View.VISIBLE else View.INVISIBLE
+        b.modeBar.visibility = if (isRecording) View.INVISIBLE else View.VISIBLE
         b.chevronButton.setImageResource(R.drawable.ic_chevron_up)
     }
 
     private fun onTrayItem(item: TrayItem) {
-        when (item) {
-            TrayItem.GRID -> {
-                grid = !grid
-                prefs.edit().putBoolean("grid", grid).apply()
-                refreshUi()
-                return
-            }
-            else -> Unit
+        if (item == TrayItem.GRID) {
+            grid = !grid
+            prefs.edit().putBoolean("grid", grid).apply()
+            refreshUi()
+            return
         }
         if (openTrayItem == item) {
             openTrayItem = null
@@ -620,7 +868,7 @@ class MainActivity : AppCompatActivity() {
         b.exposureSeek.visibility = View.GONE
         b.optionsList.visibility = View.VISIBLE
         when (item) {
-            TrayItem.FLASH -> if (mode == Mode.VIDEO) {
+            TrayItem.FLASH -> if (mode.isVideo) {
                 addOptions(listOf("Off" to !torch, "On" to torch)) { i -> setTorch(i == 1) }
             } else {
                 addOptions(
@@ -672,7 +920,8 @@ class MainActivity : AppCompatActivity() {
                     haptic(it)
                     onPick(i)
                     openTrayItem = null
-                    onTrayItemReopen()
+                    b.optionsRow.visibility = View.INVISIBLE
+                    refreshUi()
                 }
             }
             row.addView(tv)
@@ -683,15 +932,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** After a pick, collapse the options and refresh the tray labels. */
-    private fun onTrayItemReopen() {
-        b.optionsRow.visibility = View.INVISIBLE
-        refreshTrayValues()
-        refreshUi()
-    }
-
     private fun cycleFlash() {
-        if (mode == Mode.VIDEO) {
+        if (mode.isVideo) {
             setTorch(!torch)
         } else {
             setFlash(
@@ -737,18 +979,21 @@ class MainActivity : AppCompatActivity() {
     // ---------------- UI state ----------------
 
     private fun refreshUi() {
-        val recordingNow = recording != null
+        val recordingNow = isRecording
         b.shutterButton.setState(
             when {
                 recordingNow -> ShutterButton.State.RECORDING
-                mode == Mode.VIDEO -> ShutterButton.State.VIDEO
+                mode.isVideo -> ShutterButton.State.VIDEO
                 else -> ShutterButton.State.PHOTO
             },
         )
-        b.modeVideo.setTextColor(getColor(if (mode == Mode.VIDEO) R.color.ios_yellow else R.color.white))
-        b.modePhoto.setTextColor(getColor(if (mode == Mode.PHOTO) R.color.ios_yellow else R.color.white))
+        refreshModeColors()
 
-        val viewRatio = if (mode == Mode.VIDEO) "9:16" else format.viewRatio
+        val viewRatio = when {
+            mode.isVideo -> "9:16"
+            mode == Mode.PORTRAIT -> Format.R4_3.viewRatio
+            else -> format.viewRatio
+        }
         val lp = b.previewView.layoutParams as ConstraintLayout.LayoutParams
         if (lp.dimensionRatio != viewRatio) {
             lp.dimensionRatio = viewRatio
@@ -757,7 +1002,7 @@ class MainActivity : AppCompatActivity() {
         b.grid.visibility = if (grid) View.VISIBLE else View.GONE
 
         b.flashButton.setImageResource(
-            if (mode == Mode.VIDEO) {
+            if (mode.isVideo) {
                 if (torch) R.drawable.ic_flash_on else R.drawable.ic_flash_off
             } else {
                 when (flashMode) {
@@ -767,22 +1012,25 @@ class MainActivity : AppCompatActivity() {
                 }
             },
         )
-        val flashOn = if (mode == Mode.VIDEO) torch else flashMode == ImageCapture.FLASH_MODE_ON
+        val flashOn = if (mode.isVideo) torch else flashMode == ImageCapture.FLASH_MODE_ON
         b.flashButton.setColorFilter(getColor(if (flashOn) R.color.ios_yellow else R.color.white))
+        b.flashButton.visibility = if (mode == Mode.TIMELAPSE) View.INVISIBLE else View.VISIBLE
+        b.nightButton.visibility = if (mode == Mode.PHOTO && nightAvailable && !recordingNow) View.VISIBLE else View.GONE
+        b.nightButton.setColorFilter(getColor(if (night) R.color.ios_yellow else R.color.white))
         b.hdrButton.setTextColor(getColor(if (hdr) R.color.ios_yellow else R.color.white))
-        b.hdrButton.visibility = if (mode == Mode.PHOTO && !recordingNow) View.VISIBLE else View.INVISIBLE
+        b.hdrButton.visibility = if (!mode.isVideo && !recordingNow) View.VISIBLE else View.INVISIBLE
 
         // While recording: timer replaces the chevron; modes, tray and camera flip are hidden.
         b.recTimer.visibility = if (recordingNow) View.VISIBLE else View.GONE
         b.chevronButton.visibility = if (recordingNow) View.GONE else View.VISIBLE
-        if (recordingNow) closeTray()
+        if (recordingNow && b.tray.visibility == View.VISIBLE) closeTray()
         b.modeBar.visibility = when {
             recordingNow -> View.INVISIBLE
             b.tray.visibility == View.VISIBLE -> View.GONE
             else -> View.VISIBLE
         }
         b.flipButton.visibility = if (recordingNow) View.INVISIBLE else View.VISIBLE
-        b.zoomBar.visibility = if (lensFacing == CameraSelector.LENS_FACING_BACK) View.VISIBLE else View.GONE
+        b.zoomBar.visibility = if (lensFacing == CameraSelector.LENS_FACING_BACK && mode != Mode.SLOMO) View.VISIBLE else View.GONE
         refreshTrayValues()
     }
 
@@ -794,7 +1042,7 @@ class MainActivity : AppCompatActivity() {
             label.setTextColor(c)
             icon.setColorFilter(c)
         }
-        if (mode == Mode.VIDEO) {
+        if (mode.isVideo) {
             set(TrayItem.FLASH, if (torch) "On" else "Off", torch)
             trayViews[TrayItem.FLASH]?.first?.setImageResource(if (torch) R.drawable.ic_flash_on else R.drawable.ic_flash_off)
         } else {
@@ -826,7 +1074,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun rotateUi(deg: Float) {
         uiRotation = deg
-        val views = listOf<View>(b.flashButton, b.hdrButton, b.thumbnail, b.flipButton, b.countdown) +
+        val views = listOf<View>(b.flashButton, b.nightButton, b.hdrButton, b.thumbnail, b.flipButton, b.countdown) +
             zoomViews + trayViews.values.map { it.first }
         for (v in views) {
             // Take the short way round.
@@ -898,11 +1146,11 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
         })
-        // Horizontal swipe switches mode, like on iPhone.
+        // Horizontal swipe switches to the neighbouring mode, like on iPhone.
         val fling = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
                 if (e1 == null || abs(vx) < abs(vy) * 1.5f || abs(e2.x - e1.x) < dp(60)) return false
-                setMode(if (vx > 0) Mode.VIDEO else Mode.PHOTO)
+                stepMode(if (vx > 0) -1 else 1)
                 return true
             }
         })

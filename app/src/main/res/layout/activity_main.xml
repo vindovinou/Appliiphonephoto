@@ -95,6 +95,17 @@
             android:src="@drawable/ic_flash_auto" />
 
         <ImageButton
+            android:id="@+id/nightButton"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:layout_gravity="start|center_vertical"
+            android:layout_marginStart="64dp"
+            android:background="@drawable/tray_btn_bg"
+            android:contentDescription="Mode Nuit"
+            android:src="@drawable/ic_night"
+            android:visibility="gone" />
+
+        <ImageButton
             android:id="@+id/chevronButton"
             android:layout_width="44dp"
             android:layout_height="36dp"
@@ -206,15 +217,6 @@
             android:layout_gravity="center"
             android:orientation="horizontal">
 
-            <TextView
-                android:id="@+id/modeVideo"
-                style="@style/ModeLabel"
-                android:text="VIDÉO" />
-
-            <TextView
-                android:id="@+id/modePhoto"
-                style="@style/ModeLabel"
-                android:text="PHOTO" />
         </LinearLayout>
 
         <HorizontalScrollView

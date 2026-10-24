@@ -115,6 +115,11 @@ class TimeLapseRecorder(
     }
 
     private fun encode(frame: Bitmap) {
+        // A frame can still arrive after stop(); never let it open a new file.
+        if (!running) {
+            frame.recycle()
+            return
+        }
         try {
             if (codec == null) setup(frame)
             val surface = inputSurface ?: return

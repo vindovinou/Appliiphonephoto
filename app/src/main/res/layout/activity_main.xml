@@ -74,6 +74,24 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="@id/previewView" />
 
+    <TextView
+        android:id="@+id/depthLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/depth_label_bg"
+        android:letterSpacing="0.06"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="3dp"
+        android:text="EFFET DE PROFONDEUR"
+        android:textColor="@color/black"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="@id/previewView" />
+
     <!-- Top bar: flash · chevron (settings tray) / recording timer · Smart HDR -->
     <FrameLayout
         android:id="@+id/topBar"
@@ -143,21 +161,6 @@
             android:textStyle="bold" />
     </FrameLayout>
 
-    <!-- Zero-height marker at the bottom of the viewfinder, for the zoom bar barrier. -->
-    <View
-        android:id="@+id/previewBottom"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        app:layout_constraintBottom_toBottomOf="@id/previewView"
-        app:layout_constraintStart_toStartOf="parent" />
-
-    <androidx.constraintlayout.widget.Barrier
-        android:id="@+id/zoomBarrier"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        app:barrierDirection="top"
-        app:constraint_referenced_ids="previewBottom,optionsRow" />
-
     <!-- Zoom stops: .5  1×  2  4  8 -->
     <LinearLayout
         android:id="@+id/zoomBar"
@@ -168,7 +171,7 @@
         android:gravity="center"
         android:orientation="horizontal"
         android:paddingHorizontal="4dp"
-        app:layout_constraintBottom_toTopOf="@id/zoomBarrier"
+        app:layout_constraintBottom_toBottomOf="@id/previewView"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent" />
 
@@ -206,6 +209,7 @@
         android:id="@+id/modeArea"
         android:layout_width="0dp"
         android:layout_height="72dp"
+        android:background="#8C000000"
         app:layout_constraintBottom_toTopOf="@id/bottomBar"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
@@ -240,6 +244,7 @@
         android:id="@+id/bottomBar"
         android:layout_width="0dp"
         android:layout_height="120dp"
+        android:background="#8C000000"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">

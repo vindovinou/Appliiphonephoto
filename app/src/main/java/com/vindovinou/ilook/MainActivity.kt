@@ -247,6 +247,7 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar) {}
         })
         refreshUi()
+        loadLastThumbnail()
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCamera()
@@ -289,10 +290,12 @@ class MainActivity : AppCompatActivity() {
     private fun startCamera() {
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
+            if (isDestroyed) return@addListener
             val provider = future.get()
             cameraProvider = provider
             val ext = ExtensionsManager.getInstanceAsync(this, provider)
             ext.addListener({
+                if (isDestroyed) return@addListener
                 extensions = runCatching { ext.get() }.getOrNull()
                 refreshCapabilities()
                 bindCamera()
@@ -389,7 +392,16 @@ class MainActivity : AppCompatActivity() {
             .also { it.setAnalyzer(analysisExecutor, analyzer) }
 
     private fun liveSegmenter(): PersonSegmenter.Live =
-        liveSegmenter ?: PersonSegmenter.Live { processor?.setMask(it) }.also { liveSegmenter = it }
+        liveSegmenter ?: PersonSegmenter.Live(
+            onMask = { processor?.setMask(it) },
+            onPersonChanged = { found -> runOnUiThread { showDepthLabel(found) } },
+        ).also { liveSegmenter = it }
+
+    /** iPhone's yellow "EFFET DE PROFONDEUR" tag when Portrait/Cinematic finds a subject. */
+    private fun showDepthLabel(found: Boolean) {
+        val show = found && (mode == Mode.PORTRAIT || mode == Mode.CINEMATIC) && !isDestroyed
+        b.depthLabel.visibility = if (show) View.VISIBLE else View.GONE
+    }
 
     private fun timeLapse(): TimeLapseRecorder =
         timeLapse ?: TimeLapseRecorder(this, { lut!! }).also { timeLapse = it }
@@ -596,7 +608,9 @@ class MainActivity : AppCompatActivity() {
                             if (work !== upright) upright.recycle()
                             if (portrait) {
                                 val blurred = runCatching {
-                                    ImageProcessor.portrait(work, PersonSegmenter.segment(work))
+                                    val mask = PersonSegmenter.segment(work)
+                                    // No subject: keep the photo sharp, like the iPhone.
+                                    if (mask.hasPerson) ImageProcessor.portrait(work, mask) else null
                                 }.onFailure { Log.w(TAG, "Portrait blur failed", it) }.getOrNull()
                                 if (blurred != null) {
                                     work.recycle()
@@ -708,6 +722,38 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Shows the most recent photo or video this app saved, like the iPhone's thumbnail. */
+    private fun loadLastThumbnail() = lifecycleScope.launch {
+        val found = withContext(Dispatchers.IO) {
+            val projection = arrayOf(MediaStore.Files.FileColumns._ID, MediaStore.Files.FileColumns.MEDIA_TYPE)
+            val selection = "${MediaStore.Files.FileColumns.RELATIVE_PATH} LIKE ? AND " +
+                "${MediaStore.Files.FileColumns.MEDIA_TYPE} IN (?, ?)"
+            val args = arrayOf(
+                Environment.DIRECTORY_DCIM + "/iLook%",
+                MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
+                MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString(),
+            )
+            runCatching {
+                contentResolver.query(
+                    MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL), projection, selection, args,
+                    "${MediaStore.Files.FileColumns.DATE_ADDED} DESC",
+                )?.use { c ->
+                    if (!c.moveToFirst()) return@use null
+                    val id = c.getLong(0)
+                    val base = if (c.getInt(1) == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO) {
+                        MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                    } else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                    val uri = android.content.ContentUris.withAppendedId(base, id)
+                    uri to contentResolver.loadThumbnail(uri, Size(160, 160), null)
+                }
+            }.getOrNull()
+        }
+        if (found != null && lastUri == null) {
+            lastUri = found.first
+            b.thumbnail.setImageBitmap(found.second)
+        }
+    }
+
     private fun stopRecording() {
         val tl = timeLapse
         if (tl?.isRecording == true) {
@@ -730,6 +776,7 @@ class MainActivity : AppCompatActivity() {
         if (m == mode || m !in availableModes || isRecording || countingDown) return
         haptic(b.modeBar)
         mode = m
+        b.depthLabel.visibility = View.GONE
         if (m.isVideo && m != Mode.TIMELAPSE &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -845,6 +892,7 @@ class MainActivity : AppCompatActivity() {
     private fun closeTray() {
         openTrayItem = null
         b.optionsRow.visibility = View.INVISIBLE
+        updateZoomBarVisibility()
         b.tray.visibility = View.GONE
         b.modeBar.visibility = if (isRecording) View.INVISIBLE else View.VISIBLE
         b.chevronButton.setImageResource(R.drawable.ic_chevron_up)
@@ -860,6 +908,7 @@ class MainActivity : AppCompatActivity() {
         if (openTrayItem == item) {
             openTrayItem = null
             b.optionsRow.visibility = View.INVISIBLE
+            updateZoomBarVisibility()
             refreshTrayValues()
             return
         }
@@ -899,6 +948,7 @@ class MainActivity : AppCompatActivity() {
             TrayItem.GRID -> Unit
         }
         b.optionsRow.visibility = View.VISIBLE
+        updateZoomBarVisibility()
         refreshTrayValues()
     }
 
@@ -999,6 +1049,18 @@ class MainActivity : AppCompatActivity() {
             lp.dimensionRatio = viewRatio
             b.previewView.layoutParams = lp
         }
+        // Zoom stops sit at the bottom of the viewfinder, or above the controls when the
+        // viewfinder runs underneath them (16:9 and video).
+        val zlp = b.zoomBar.layoutParams as ConstraintLayout.LayoutParams
+        val tall = viewRatio == "9:16"
+        val anchor = if (tall) b.optionsRow.id else b.previewView.id
+        if (zlp.bottomToTop != (if (tall) anchor else ConstraintLayout.LayoutParams.UNSET) ||
+            zlp.bottomToBottom != (if (tall) ConstraintLayout.LayoutParams.UNSET else anchor)
+        ) {
+            zlp.bottomToTop = if (tall) anchor else ConstraintLayout.LayoutParams.UNSET
+            zlp.bottomToBottom = if (tall) ConstraintLayout.LayoutParams.UNSET else anchor
+            b.zoomBar.layoutParams = zlp
+        }
         b.grid.visibility = if (grid) View.VISIBLE else View.GONE
 
         b.flashButton.setImageResource(
@@ -1030,8 +1092,17 @@ class MainActivity : AppCompatActivity() {
             else -> View.VISIBLE
         }
         b.flipButton.visibility = if (recordingNow) View.INVISIBLE else View.VISIBLE
-        b.zoomBar.visibility = if (lensFacing == CameraSelector.LENS_FACING_BACK && mode != Mode.SLOMO) View.VISIBLE else View.GONE
+        updateZoomBarVisibility()
         refreshTrayValues()
+    }
+
+    /** Zoom stops give way to the tray's option row, which takes the same spot. */
+    private fun updateZoomBarVisibility() {
+        b.zoomBar.visibility = when {
+            lensFacing != CameraSelector.LENS_FACING_BACK || mode == Mode.SLOMO -> View.GONE
+            b.optionsRow.visibility == View.VISIBLE -> View.INVISIBLE
+            else -> View.VISIBLE
+        }
     }
 
     private fun refreshTrayValues() {

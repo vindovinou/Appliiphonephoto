@@ -19,7 +19,10 @@ import java.nio.ByteOrder
 object PersonSegmenter {
 
     /** Foreground confidence, one float per pixel, upright. */
-    class FloatMask(val values: FloatArray, val width: Int, val height: Int)
+    class FloatMask(val values: FloatArray, val width: Int, val height: Int) {
+        /** Whether a person was found at all (enough confident foreground pixels). */
+        val hasPerson: Boolean get() = values.count { it > 0.6f } > values.size / 100
+    }
 
     private val photoSegmenter by lazy {
         Segmentation.getClient(
@@ -50,8 +53,16 @@ object PersonSegmenter {
         return FloatMask(values, mask.width, mask.height)
     }
 
-    /** Live analyzer feeding upright byte masks to [onMask] (on the analysis thread). */
-    class Live(private val onMask: (LutSurfaceProcessor.Mask) -> Unit) : ImageAnalysis.Analyzer {
+    /**
+     * Live analyzer feeding upright byte masks to [onMask] (on the analysis thread). With nobody
+     * in frame the mask is all foreground, so nothing is blurred, like the iPhone.
+     */
+    class Live(
+        private val onMask: (LutSurfaceProcessor.Mask) -> Unit,
+        private val onPersonChanged: (Boolean) -> Unit,
+    ) : ImageAnalysis.Analyzer {
+        private var lastHasPerson: Boolean? = null
+
         private val segmenter = Segmentation.getClient(
             SelfieSegmenterOptions.Builder()
                 .setDetectorMode(SelfieSegmenterOptions.STREAM_MODE)
@@ -70,8 +81,13 @@ object PersonSegmenter {
             segmenter.process(InputImage.fromMediaImage(media, rotation))
                 .addOnSuccessListener { m ->
                     val f = toFloats(m)
+                    val person = f.hasPerson
+                    if (person != lastHasPerson) {
+                        lastHasPerson = person
+                        onPersonChanged(person)
+                    }
                     val bytes = ByteBuffer.allocateDirect(f.values.size)
-                    for (v in f.values) bytes.put((v * 255f).toInt().coerceIn(0, 255).toByte())
+                    for (v in f.values) bytes.put(if (person) (v * 255f).toInt().coerceIn(0, 255).toByte() else -1)
                     bytes.rewind()
                     onMask(LutSurfaceProcessor.Mask(bytes, f.width, f.height, rotation))
                 }

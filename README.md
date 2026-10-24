@@ -16,11 +16,12 @@ traitement Samsung possible, puis applique son propre pipeline « à la Apple »
    gardant le contraste local (comme le Smart HDR / Photonic Engine).
 3. **Science des couleurs iPhone** (dans l'espace Oklab) :
    - balance des blancs légèrement plus chaude ;
-   - exposition un peu plus basse (Samsung surexpose) ;
-   - verts moins saturés et tirés vers l'olive, ciels du cyan vers un bleu azur plus profond ;
+   - exposition lumineuse et aérée ;
+   - verts riches tirés vers le jaune, ciels du cyan vers un bleu azur plus profond ;
    - peau protégée et recentrée sur une teinte chaude naturelle ;
    - hautes lumières désaturées et neutres, ombres calmes ;
-   - courbe en S douce, noirs à peine relevés.
+   - blancs tenus juste sous la saturation (pas de blancs brûlés) ;
+   - courbe en S douce, ombres relevées.
 4. **Netteté douce, à petit rayon**, avec un seuil pour ne pas faire ressortir le bruit dans les
    ciels et sur la peau.
 

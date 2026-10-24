@@ -11,10 +11,10 @@ import kotlin.math.sin
 /**
  * A "Photographic Style" in the iPhone sense: a set of global colour/tone parameters.
  *
- * The values are tuned to move a Samsung (S25 Ultra) ISP output toward the iPhone 17 Pro look:
- * Samsung renders brighter, cooler, more saturated (especially greens and sky cyans) and with a
- * harder edge; the iPhone renders slightly warmer, calmer colour, deeper skies, olive foliage,
- * a gentle S-curve and desaturated highlights.
+ * The values are tuned to move a Samsung (S25 Ultra) ISP output toward the iPhone 17 Pro look,
+ * checked against real 17 Pro Max shots: bright and airy exposure, near-neutral slightly warm
+ * whites held just below clipping, rich yellow-leaning greens, warm saturated wood/skin tones,
+ * deeper skies than Samsung's cyan, lifted shadows and a gentle S-curve.
  */
 data class PhotoStyle(
     val id: String,
@@ -40,12 +40,12 @@ data class PhotoStyle(
 
 object Styles {
     val ALL = listOf(
-        PhotoStyle("standard", "Standard", -0.12f, 0.55f, 0.05f, 0.93f, 0.12f, 0.010f, 0.40f, 0.30f),
-        PhotoStyle("rich", "Contraste riche", -0.20f, 0.45f, 0.05f, 0.98f, 0.30f, 0.000f, 0.25f, 0.30f),
-        PhotoStyle("vibrant", "Éclatant", -0.10f, 0.50f, 0.05f, 1.10f, 0.15f, 0.008f, 0.40f, 0.30f),
-        PhotoStyle("natural", "Naturel", -0.06f, 0.30f, 0.00f, 0.86f, 0.05f, 0.018f, 0.45f, 0.35f),
-        PhotoStyle("amber", "Ambre", -0.12f, 1.40f, 0.20f, 0.95f, 0.12f, 0.012f, 0.40f, 0.30f),
-        PhotoStyle("cool", "Froid", -0.12f, -0.60f, 0.00f, 0.92f, 0.12f, 0.010f, 0.40f, 0.30f),
+        PhotoStyle("standard", "Standard", -0.04f, 0.50f, 0.03f, 1.00f, 0.10f, 0.025f, 0.45f, 0.35f),
+        PhotoStyle("rich", "Contraste riche", -0.12f, 0.45f, 0.03f, 1.04f, 0.28f, 0.005f, 0.25f, 0.30f),
+        PhotoStyle("vibrant", "Éclatant", -0.04f, 0.50f, 0.03f, 1.14f, 0.12f, 0.020f, 0.45f, 0.35f),
+        PhotoStyle("natural", "Naturel", -0.04f, 0.30f, 0.00f, 0.88f, 0.05f, 0.025f, 0.45f, 0.35f),
+        PhotoStyle("amber", "Ambre", -0.04f, 1.40f, 0.20f, 1.00f, 0.10f, 0.025f, 0.45f, 0.35f),
+        PhotoStyle("cool", "Froid", -0.04f, -0.60f, 0.00f, 0.97f, 0.10f, 0.025f, 0.45f, 0.35f),
         PhotoStyle("mono", "N&B", -0.10f, 0.00f, 0.00f, 0.00f, 0.24f, 0.000f, 0.35f, 0.30f, mono = true),
     )
 
@@ -147,11 +147,11 @@ object ColorScience {
         val wBlue = bump(h, 262f, 20f)
 
         // Foliage toward olive/yellow, skies from cyan toward azure, skin pulled to a warm centre.
-        h += -7f * wGreen + 10f * wCyan + 0.18f * wSkin * hueDiff(62f, h)
+        h += -9f * wGreen + 10f * wCyan + 0.18f * wSkin * hueDiff(62f, h)
         if (h < 0) h += 360f
 
         var chromaScale = style.chroma
-        chromaScale *= (1f - 0.08f * wGreen) * (1f - 0.06f * wCyan) * (1f + 0.03f * wRed) * (1f + 0.03f * wBlue)
+        chromaScale *= (1f + 0.04f * wGreen) * (1f - 0.06f * wCyan) * (1f + 0.03f * wRed) * (1f + 0.03f * wBlue)
         // Keep skin close to its original richness whatever the style does to the rest.
         if (!style.mono) chromaScale += (maxOf(chromaScale, 0.97f) - chromaScale) * wSkin * 0.6f
         C *= chromaScale
@@ -161,6 +161,8 @@ object ColorScience {
         C *= 1f - 0.18f * (1f - smoothstep(0.05f, 0.30f, L))
 
         L = toneCurve(L.coerceIn(0f, 1f), style.contrast)
+        // Soft shoulder: sunlit whites sit just below full white instead of clipping.
+        L -= 0.025f * smoothstep(0.75f, 1.0f, L)
         L = style.blackLift + (1f - style.blackLift) * L
         if (style.mono) C = 0f
 

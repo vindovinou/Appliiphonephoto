@@ -4,7 +4,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
-import kotlin.math.hypot
 
 class ColorScienceTest {
 
@@ -44,12 +43,16 @@ class ColorScienceTest {
     }
 
     @Test
-    fun samsungGreensAreCalmedDown() {
+    fun greensLeanTowardYellow() {
         val src = floatArrayOf(0.25f, 0.65f, 0.2f)
         val out = t(src[0], src[1], src[2])
-        val chromaIn = hypot(src[1] - src[0], src[1] - src[2])
-        val chromaOut = hypot(out[1] - out[0], out[1] - out[2])
-        assertTrue(chromaOut < chromaIn)
+        assertTrue(out[0] / out[1] > src[0] / src[1])
+    }
+
+    @Test
+    fun sunlitWhitesStayJustBelowClipping() {
+        val white = t(1f, 1f, 1f)
+        assertTrue(white.all { it < 0.995f })
     }
 
     @Test

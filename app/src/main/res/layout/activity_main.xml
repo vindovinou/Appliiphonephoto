@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/black">
+
+    <!-- Top bar: flash · style · HDR -->
+    <LinearLayout
+        android:id="@+id/topBar"
+        android:layout_width="0dp"
+        android:layout_height="56dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="16dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <TextView
+            android:id="@+id/flashButton"
+            style="@style/TopBarButton"
+            android:text="⚡ Auto" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/styleButton"
+            style="@style/TopBarButton"
+            android:background="@drawable/pill_bg"
+            android:paddingHorizontal="14dp"
+            android:text="Standard" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/hdrButton"
+            style="@style/TopBarButton"
+            android:text="HDR" />
+    </LinearLayout>
+
+    <androidx.camera.view.PreviewView
+        android:id="@+id/previewView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintDimensionRatio="3:4"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/topBar"
+        app:scaleType="fillCenter" />
+
+    <com.vindovinou.ilook.FocusView
+        android:id="@+id/focusView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintBottom_toBottomOf="@id/previewView"
+        app:layout_constraintEnd_toEndOf="@id/previewView"
+        app:layout_constraintStart_toStartOf="@id/previewView"
+        app:layout_constraintTop_toTopOf="@id/previewView" />
+
+    <View
+        android:id="@+id/shutterFlash"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:alpha="0"
+        android:background="@color/black"
+        app:layout_constraintBottom_toBottomOf="@id/previewView"
+        app:layout_constraintEnd_toEndOf="@id/previewView"
+        app:layout_constraintStart_toStartOf="@id/previewView"
+        app:layout_constraintTop_toTopOf="@id/previewView" />
+
+    <TextView
+        android:id="@+id/infoLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/pill_bg"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="4dp"
+        android:textColor="@color/ios_yellow"
+        android:textSize="13sp"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="@id/previewView" />
+
+    <!-- Zoom pills: .5  1x  2  4  8 -->
+    <LinearLayout
+        android:id="@+id/zoomBar"
+        android:layout_width="wrap_content"
+        android:layout_height="44dp"
+        android:layout_marginBottom="12dp"
+        android:background="@drawable/pill_bg"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingHorizontal="4dp"
+        app:layout_constraintBottom_toBottomOf="@id/previewView"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <TextView
+        android:id="@+id/modeLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:letterSpacing="0.08"
+        android:text="@string/mode_photo"
+        android:textColor="@color/ios_yellow"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/previewView" />
+
+    <ImageView
+        android:id="@+id/thumbnail"
+        android:layout_width="52dp"
+        android:layout_height="52dp"
+        android:layout_marginStart="32dp"
+        android:background="@drawable/thumb_bg"
+        android:clipToOutline="true"
+        android:contentDescription="Galerie"
+        android:scaleType="centerCrop"
+        app:layout_constraintBottom_toBottomOf="@id/shutterButton"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="@id/shutterButton" />
+
+    <ProgressBar
+        android:id="@+id/processing"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:indeterminateTint="@color/white"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="@id/thumbnail"
+        app:layout_constraintEnd_toEndOf="@id/thumbnail"
+        app:layout_constraintStart_toStartOf="@id/thumbnail"
+        app:layout_constraintTop_toTopOf="@id/thumbnail" />
+
+    <ImageButton
+        android:id="@+id/shutterButton"
+        android:layout_width="78dp"
+        android:layout_height="78dp"
+        android:background="@drawable/shutter"
+        android:contentDescription="Prendre une photo"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/modeLabel" />
+
+    <ImageButton
+        android:id="@+id/flipButton"
+        android:layout_width="52dp"
+        android:layout_height="52dp"
+        android:layout_marginEnd="32dp"
+        android:background="@drawable/round_dark"
+        android:contentDescription="Changer de caméra"
+        android:src="@drawable/ic_flip"
+        app:layout_constraintBottom_toBottomOf="@id/shutterButton"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="@id/shutterButton" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

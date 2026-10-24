@@ -1,0 +1,7 @@
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="ios_yellow">#FFFFD60A</color>
+    <color name="pill_bg">#66000000</color>
+    <color name="bar_bg">#FF000000</color>
+</resources>

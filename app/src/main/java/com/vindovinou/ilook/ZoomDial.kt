@@ -64,6 +64,9 @@ class ZoomDial @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
 
     private var lastX = 0f
     private var lastStop = -1
+
+    /** True while a finger is on the dial (or on the zoom stops driving it): never auto-hide then. */
+    private var holding = false
     private val hide = Runnable {
         animate().alpha(0f).setDuration(200).withEndAction {
             visibility = GONE
@@ -77,15 +80,16 @@ class ZoomDial @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
         invalidate()
     }
 
-    /** Shows the dial at [current]; it fades out a moment after the last touch. */
-    fun show(current: Float) {
+    /** Shows the dial at [current]; it fades out a moment after the finger lifts. */
+    fun show(current: Float, hold: Boolean = true) {
         zoom = current.coerceIn(minZoom, maxZoom)
+        holding = hold
         removeCallbacks(hide)
         animate().cancel()
         visibility = VISIBLE
         alpha = 1f
         invalidate()
-        postDelayed(hide, 1500)
+        if (!hold) postDelayed(hide, 1500)
     }
 
     fun setZoomSilently(z: Float) {
@@ -107,11 +111,12 @@ class ZoomDial @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
         }
         onZoom?.invoke(zoom)
         removeCallbacks(hide)
-        postDelayed(hide, 1500)
+        if (!holding) postDelayed(hide, 1500)
         invalidate()
     }
 
     fun endDrag() {
+        holding = false
         removeCallbacks(hide)
         postDelayed(hide, 1500)
     }
@@ -121,6 +126,7 @@ class ZoomDial @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 lastX = ev.x
+                holding = true
                 removeCallbacks(hide)
             }
             MotionEvent.ACTION_MOVE -> {

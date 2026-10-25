@@ -1323,7 +1323,7 @@ class MainActivity : AppCompatActivity() {
                 val z = (zs.zoomRatio * detector.scaleFactor).coerceIn(zs.minZoomRatio, zs.maxZoomRatio)
                 cam.cameraControl.setZoomRatio(z)
                 b.zoomDial.setRange(zs.minZoomRatio, zs.maxZoomRatio)
-                b.zoomDial.show(z)
+                b.zoomDial.show(z, hold = false)
                 b.zoomBar.visibility = View.INVISIBLE
                 return true
             }

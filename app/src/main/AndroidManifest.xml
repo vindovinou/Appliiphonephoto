@@ -6,6 +6,15 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- Open the Samsung Gallery (package visibility, Android 11+). -->
+    <queries>
+        <package android:name="com.sec.android.gallery3d" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="image/*" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -31,5 +40,11 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="Réglages"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.ILook" />
     </application>
 </manifest>

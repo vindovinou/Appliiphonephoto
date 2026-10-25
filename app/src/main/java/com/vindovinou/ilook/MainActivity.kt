@@ -100,7 +100,7 @@ class MainActivity : AppCompatActivity() {
         R1_1("1:1", 1f, "1:1"),
     }
 
-    private enum class TrayItem { FLASH, FORMAT, TIMER, EXPOSURE, STYLES, GRID }
+    private enum class TrayItem { FLASH, FORMAT, TIMER, EXPOSURE, STYLES, SETTINGS }
 
     private lateinit var b: ActivityMainBinding
     private val prefs by lazy { getSharedPreferences("ilook", MODE_PRIVATE) }
@@ -130,6 +130,10 @@ class MainActivity : AppCompatActivity() {
     private var format = Format.R4_3
     private var timerSeconds = 0
     private var grid = false
+    private var level = false
+    private var mirrorFront = false
+    private var volumeShutter = true
+    private var settingsStamp = ""
     private var hdr = true
     private var style: PhotoStyle = Styles.ALL[0]
     private var openTrayItem: TrayItem? = null
@@ -195,17 +199,14 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-        style = Styles.byId(prefs.getString("style", null))
-        hdr = prefs.getBoolean("hdr", true)
-        flashMode = prefs.getInt("flash", ImageCapture.FLASH_MODE_AUTO)
-        format = Format.entries.getOrElse(prefs.getInt("format", 0)) { Format.R4_3 }
-        timerSeconds = prefs.getInt("timer", 0)
-        grid = prefs.getBoolean("grid", false)
+        loadSettings(atLaunch = true)
         lut = Lut3D(style)
         processor = LutSurfaceProcessor(lut!!)
         sound.load(MediaActionSound.SHUTTER_CLICK)
 
         buildZoomBar()
+        b.zoomDial.onZoom = { z -> camera?.cameraControl?.setZoomRatio(z) }
+        b.zoomDial.onHidden = { updateZoomBarVisibility() }
         buildTray()
         buildModeBar()
         setupShutter()
@@ -240,6 +241,7 @@ class MainActivity : AppCompatActivity() {
                 val cam = camera ?: return
                 val es = cam.cameraInfo.exposureState
                 cam.cameraControl.setExposureCompensationIndex(es.exposureCompensationRange.lower + progress)
+                prefs.edit().putInt("ev_index", es.exposureCompensationRange.lower + progress).apply()
                 refreshTrayValues()
             }
 
@@ -259,6 +261,41 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         orientationListener.enable()
+        // Back from Settings: apply what changed.
+        val before = settingsStamp
+        val styleBefore = style
+        loadSettings(atLaunch = false)
+        if (style != styleBefore) setStyle(style)
+        if (before.isNotEmpty() && before != settingsStamp && cameraProvider != null) {
+            refreshCapabilities()
+            bindCamera()
+        }
+        refreshUi()
+    }
+
+    /** Reads settings; "Conserver les réglages" decides what survives a relaunch, as on iOS. */
+    private fun loadSettings(atLaunch: Boolean) {
+        hdr = prefs.getBoolean("hdr", true)
+        flashMode = prefs.getInt("flash", ImageCapture.FLASH_MODE_AUTO)
+        grid = prefs.getBoolean(CameraSettings.GRID, false)
+        level = prefs.getBoolean(CameraSettings.LEVEL, false)
+        mirrorFront = prefs.getBoolean(CameraSettings.MIRROR, false)
+        volumeShutter = prefs.getBoolean(CameraSettings.VOLUME_SHUTTER, true)
+        style = Styles.byId(prefs.getString("style", null))
+        if (atLaunch) {
+            if (!prefs.getBoolean(CameraSettings.KEEP_STYLES, true)) {
+                style = Styles.ALL[0]
+                prefs.edit().putString("style", style.id).apply()
+            }
+            val keepCreative = prefs.getBoolean(CameraSettings.KEEP_CREATIVE, false)
+            format = if (keepCreative) Format.entries.getOrElse(prefs.getInt("format", 0)) { Format.R4_3 } else Format.R4_3
+            timerSeconds = if (keepCreative) prefs.getInt("timer", 0) else 0
+            mode = if (prefs.getBoolean(CameraSettings.KEEP_MODE, false)) {
+                Mode.entries.firstOrNull { it.name == prefs.getString("mode", null) } ?: Mode.PHOTO
+            } else Mode.PHOTO
+        }
+        // Settings that need the camera rebound when they change.
+        settingsStamp = prefs.getString(CameraSettings.VIDEO, "") + "|" + prefs.getInt(CameraSettings.SLOMO, 240)
     }
 
     override fun onPause() {
@@ -278,7 +315,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         // Volume buttons fire the shutter, like on iPhone.
-        if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+        if (volumeShutter && (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_VOLUME_UP)) {
             if (event?.repeatCount == 0) onShutterTap()
             return true
         }
@@ -327,9 +364,11 @@ class MainActivity : AppCompatActivity() {
             VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(qualities.first())).build()),
             Preview.Builder().build(),
         )
-        return info.getSupportedFrameRateRanges(probe)
+        val rates = info.getSupportedFrameRateRanges(probe)
             .filter { it.lower == it.upper && it.upper >= 120 }
-            .maxOfOrNull { it.upper } ?: 0
+            .map { it.upper }
+        val wanted = prefs.getInt(CameraSettings.SLOMO, 240)
+        return if (wanted in rates) wanted else rates.maxOrNull() ?: 0
     }
 
     @OptIn(ExperimentalCamera2Interop::class)
@@ -361,10 +400,10 @@ class MainActivity : AppCompatActivity() {
         return builder.build()
     }
 
-    private fun buildVideoCapture(fps: Range<Int>? = null): VideoCapture<Recorder> {
+    private fun buildVideoCapture(fps: Range<Int>? = null, quality: Quality = Quality.FHD): VideoCapture<Recorder> {
         // iPhone default: 1080p.
         val recorder = Recorder.Builder()
-            .setQualitySelector(QualitySelector.from(Quality.FHD, FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD)))
+            .setQualitySelector(QualitySelector.from(quality, FallbackStrategy.lowerQualityOrHigherThan(quality)))
             .build()
         return VideoCapture.Builder(recorder).setTargetRotation(surfaceRotation)
             .apply { fps?.let { setTargetFrameRate(it) } }
@@ -472,10 +511,21 @@ class MainActivity : AppCompatActivity() {
                     { listOf(buildPreview(r169), buildAnalysis(r169, Size(1920, 1080), true, timeLapse())) to previewOnly },
                     { listOf(buildPreview(r169), buildAnalysis(r169, Size(1280, 720), true, timeLapse())) to null },
                 )
-                else -> listOf(
-                    { listOf(buildPreview(r169), buildVideoCapture()) to previewAndVideo },
-                    { listOf(buildPreview(r169), buildVideoCapture()) to null },
-                )
+                else -> {
+                    // "Enregistrer une vidéo" setting.
+                    val vf = CameraSettings.videoFormat(prefs)
+                    val q = when (vf.height) {
+                        2160 -> Quality.UHD
+                        720 -> Quality.HD
+                        else -> Quality.FHD
+                    }
+                    val fps = Range(vf.fps, vf.fps)
+                    listOf(
+                        { listOf(buildPreview(r169, fps), buildVideoCapture(fps, q)) to previewAndVideo },
+                        { listOf(buildPreview(r169), buildVideoCapture(null, q)) to previewAndVideo },
+                        { listOf(buildPreview(r169), buildVideoCapture()) to null },
+                    )
+                }
             }
             for (attempt in attempts) {
                 val (useCases, effect) = attempt()
@@ -501,6 +551,9 @@ class MainActivity : AppCompatActivity() {
         }
         camera?.cameraInfo?.zoomState?.observe(this) { updateZoomBar(it.zoomRatio) }
         if (mode.isVideo && torch) camera?.cameraControl?.enableTorch(true)
+        if (prefs.getBoolean(CameraSettings.KEEP_EXPOSURE, false)) {
+            camera?.cameraControl?.setExposureCompensationIndex(prefs.getInt("ev_index", 0))
+        }
         refreshUi()
     }
 
@@ -595,6 +648,7 @@ class MainActivity : AppCompatActivity() {
         val useHdr = hdr
         val portrait = mode == Mode.PORTRAIT
         val ratio = if (portrait) Format.R4_3.ratio else format.ratio
+        val mirror = mirrorFront && lensFacing == CameraSelector.LENS_FACING_FRONT
         capture.takePicture(ContextCompat.getMainExecutor(this), object : ImageCapture.OnImageCapturedCallback() {
             override fun onCaptureSuccess(image: ImageProxy) {
                 val bytes = image.planes[0].buffer.let { buf -> ByteArray(buf.remaining()).also { buf.get(it) } }
@@ -606,6 +660,7 @@ class MainActivity : AppCompatActivity() {
                             val (upright, exif) = PhotoSaver.decodeUpright(bytes, rotation)
                             var work = PhotoSaver.cropToRatio(upright, ratio)
                             if (work !== upright) upright.recycle()
+                            if (mirror) work = PhotoSaver.mirror(work).also { work.recycle() }
                             if (portrait) {
                                 val blurred = runCatching {
                                     val mask = PersonSegmenter.segment(work)
@@ -682,7 +737,7 @@ class MainActivity : AppCompatActivity() {
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, "ILK_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".mp4")
             put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/iLook")
+            put(MediaStore.Video.Media.RELATIVE_PATH, PhotoSaver.CAMERA_ROLL)
         }
         val options = MediaStoreOutputOptions.Builder(contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
             .setContentValues(values)
@@ -729,7 +784,7 @@ class MainActivity : AppCompatActivity() {
             val selection = "${MediaStore.Files.FileColumns.RELATIVE_PATH} LIKE ? AND " +
                 "${MediaStore.Files.FileColumns.MEDIA_TYPE} IN (?, ?)"
             val args = arrayOf(
-                Environment.DIRECTORY_DCIM + "/iLook%",
+                PhotoSaver.CAMERA_ROLL + "%",
                 MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
                 MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString(),
             )
@@ -776,6 +831,7 @@ class MainActivity : AppCompatActivity() {
         if (m == mode || m !in availableModes || isRecording || countingDown) return
         haptic(b.modeBar)
         mode = m
+        prefs.edit().putString("mode", m.name).apply()
         b.depthLabel.visibility = View.GONE
         if (m.isVideo && m != Mode.TIMELAPSE &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
@@ -835,9 +891,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun trayItemsForMode() = when (mode) {
         Mode.PHOTO -> TrayItem.entries.toList()
-        Mode.PORTRAIT -> listOf(TrayItem.FLASH, TrayItem.TIMER, TrayItem.EXPOSURE, TrayItem.STYLES, TrayItem.GRID)
-        Mode.TIMELAPSE -> listOf(TrayItem.EXPOSURE, TrayItem.GRID)
-        else -> listOf(TrayItem.FLASH, TrayItem.EXPOSURE, TrayItem.GRID)
+        Mode.PORTRAIT -> listOf(TrayItem.FLASH, TrayItem.TIMER, TrayItem.EXPOSURE, TrayItem.STYLES, TrayItem.SETTINGS)
+        Mode.TIMELAPSE -> listOf(TrayItem.EXPOSURE, TrayItem.SETTINGS)
+        else -> listOf(TrayItem.FLASH, TrayItem.EXPOSURE, TrayItem.SETTINGS)
     }
 
     private fun buildTray() {
@@ -847,7 +903,7 @@ class MainActivity : AppCompatActivity() {
             TrayItem.TIMER to R.drawable.ic_timer,
             TrayItem.EXPOSURE to R.drawable.ic_exposure,
             TrayItem.STYLES to R.drawable.ic_styles,
-            TrayItem.GRID to R.drawable.ic_grid,
+            TrayItem.SETTINGS to R.drawable.ic_settings,
         )
         for (item in TrayItem.entries) {
             val col = LinearLayout(this).apply {
@@ -899,10 +955,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onTrayItem(item: TrayItem) {
-        if (item == TrayItem.GRID) {
-            grid = !grid
-            prefs.edit().putBoolean("grid", grid).apply()
-            refreshUi()
+        if (item == TrayItem.SETTINGS) {
+            closeTray()
+            startActivity(Intent(this, SettingsActivity::class.java))
             return
         }
         if (openTrayItem == item) {
@@ -945,7 +1000,7 @@ class MainActivity : AppCompatActivity() {
                     b.exposureSeek.visibility = View.VISIBLE
                 }
             }
-            TrayItem.GRID -> Unit
+            TrayItem.SETTINGS -> Unit
         }
         b.optionsRow.visibility = View.VISIBLE
         updateZoomBarVisibility()
@@ -1062,6 +1117,7 @@ class MainActivity : AppCompatActivity() {
             b.zoomBar.layoutParams = zlp
         }
         b.grid.visibility = if (grid) View.VISIBLE else View.GONE
+        if (b.level.active != level) b.level.active = level
 
         b.flashButton.setImageResource(
             if (mode.isVideo) {
@@ -1100,7 +1156,7 @@ class MainActivity : AppCompatActivity() {
     private fun updateZoomBarVisibility() {
         b.zoomBar.visibility = when {
             lensFacing != CameraSelector.LENS_FACING_BACK || mode == Mode.SLOMO -> View.GONE
-            b.optionsRow.visibility == View.VISIBLE -> View.INVISIBLE
+            b.optionsRow.visibility == View.VISIBLE || b.zoomDial.visibility == View.VISIBLE -> View.INVISIBLE
             else -> View.VISIBLE
         }
     }
@@ -1140,7 +1196,7 @@ class MainActivity : AppCompatActivity() {
         val ev = if (es != null) es.exposureCompensationIndex * es.exposureCompensationStep.toFloat() else 0f
         set(TrayItem.EXPOSURE, String.format(Locale.US, "%+.1f", ev), abs(ev) > 0.01f)
         set(TrayItem.STYLES, style.label, style != Styles.ALL[0])
-        set(TrayItem.GRID, if (grid) "On" else "Off", grid)
+        set(TrayItem.SETTINGS, "Réglages", false)
     }
 
     private fun rotateUi(deg: Float) {
@@ -1167,12 +1223,65 @@ class MainActivity : AppCompatActivity() {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
                 setBackgroundResource(R.drawable.zoom_dot)
-                setOnClickListener { haptic(it); setZoom(ratio) }
             }
+            setupZoomPill(tv, ratio)
             val lp = LinearLayout.LayoutParams(size, size).apply { marginStart = dp(3); marginEnd = dp(3) }
             b.zoomBar.addView(tv, lp)
             zoomViews += tv
         }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupZoomPill(tv: TextView, ratio: Float) {
+        var downX = 0f
+        var lastX = 0f
+        var dragging = false
+        val hold = Runnable {
+            dragging = true
+            showZoomDial()
+        }
+        tv.setOnTouchListener { v, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = ev.rawX
+                    lastX = ev.rawX
+                    dragging = false
+                    v.postDelayed(hold, 350)
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (!dragging && abs(ev.rawX - downX) > dp(8)) {
+                        dragging = true
+                        v.removeCallbacks(hold)
+                        showZoomDial()
+                    }
+                    if (dragging) b.zoomDial.dragBy(ev.rawX - lastX)
+                    lastX = ev.rawX
+                }
+                MotionEvent.ACTION_UP -> {
+                    v.removeCallbacks(hold)
+                    if (dragging) b.zoomDial.endDrag() else {
+                        haptic(v)
+                        setZoom(ratio)
+                    }
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    v.removeCallbacks(hold)
+                    if (dragging) b.zoomDial.endDrag()
+                }
+            }
+            true
+        }
+    }
+
+    /** Swaps the zoom pills for the iPhone's one-finger zoom dial. */
+    private fun showZoomDial() {
+        val zs = camera?.cameraInfo?.zoomState?.value ?: return
+        b.zoomDial.setRange(zs.minZoomRatio, zs.maxZoomRatio)
+        if (b.zoomDial.visibility != View.VISIBLE) {
+            b.zoomDial.show(zs.zoomRatio)
+            b.zoomDial.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        }
+        b.zoomBar.visibility = View.INVISIBLE
     }
 
     private fun setZoom(ratio: Float) {
@@ -1211,9 +1320,11 @@ class MainActivity : AppCompatActivity() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 val cam = camera ?: return false
                 val zs = cam.cameraInfo.zoomState.value ?: return false
-                cam.cameraControl.setZoomRatio(
-                    (zs.zoomRatio * detector.scaleFactor).coerceIn(zs.minZoomRatio, zs.maxZoomRatio),
-                )
+                val z = (zs.zoomRatio * detector.scaleFactor).coerceIn(zs.minZoomRatio, zs.maxZoomRatio)
+                cam.cameraControl.setZoomRatio(z)
+                b.zoomDial.setRange(zs.minZoomRatio, zs.maxZoomRatio)
+                b.zoomDial.show(z)
+                b.zoomBar.visibility = View.INVISIBLE
                 return true
             }
         })
@@ -1279,6 +1390,7 @@ class MainActivity : AppCompatActivity() {
         val evDelta = dy / dp(150)
         val idx = (startIndex + (evDelta / step).roundToInt()).coerceIn(range.lower, range.upper)
         if (idx != es.exposureCompensationIndex) cam.cameraControl.setExposureCompensationIndex(idx)
+        prefs.edit().putInt("ev_index", idx).apply()
         val ev = idx * step
         b.focusView.setEv(ev / 2f)
         showInfo(String.format(Locale.US, "☀ %+.1f", ev))
@@ -1295,10 +1407,23 @@ class MainActivity : AppCompatActivity() {
 
     private fun openLast() {
         val uri = lastUri ?: return
-        startActivity(
-            Intent(Intent.ACTION_VIEW).setDataAndType(uri, contentResolver.getType(uri) ?: "image/*")
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+        val type = contentResolver.getType(uri) ?: "image/*"
+        // Camera "review" action opens the gallery on this item and lets you swipe through the
+        // camera roll; try the Samsung Gallery first, then any gallery.
+        val attempts = listOf(
+            Intent("com.android.camera.action.REVIEW").setDataAndType(uri, type).setPackage(SAMSUNG_GALLERY),
+            Intent(Intent.ACTION_VIEW).setDataAndType(uri, type).setPackage(SAMSUNG_GALLERY),
+            Intent("com.android.camera.action.REVIEW").setDataAndType(uri, type),
+            Intent(Intent.ACTION_VIEW).setDataAndType(uri, type),
         )
+        for (intent in attempts) {
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            try {
+                startActivity(intent)
+                return
+            } catch (_: android.content.ActivityNotFoundException) {
+            }
+        }
     }
 
     private fun haptic(v: View) = v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
@@ -1307,5 +1432,6 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "iLook"
+        private const val SAMSUNG_GALLERY = "com.sec.android.gallery3d"
     }
 }

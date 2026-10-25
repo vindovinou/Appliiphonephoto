@@ -47,11 +47,19 @@ correspond à la photo finale (sans le Smart HDR, qui n'est appliqué qu'à la c
 - Vidéo 1080p avec le même rendu de couleurs que les photos, chrono rouge pendant
   l'enregistrement, lampe en vidéo.
 - Boutons de zoom **.5 · 1× · 2 · 4 · 8**. L'ultra grand-angle du S25 descend à 0,6×, c'est lui
-  qu'on obtient avec « .5 ».
+  qu'on obtient avec « .5 ». **Molette de zoom** comme sur iPhone : glisser un doigt sur les boutons
+  (ou appui long, ou pincer) fait apparaître le demi-cercle gradué, jusqu'à 40×.
+- **Réglages** (roue dentée dans le volet), comme Réglages > Appareil photo sur iOS :
+  - Enregistrer une vidéo : 720p30, 1080p30/60, 4K24/30/60.
+  - Enregistrer au ralenti : 120 ou 240 i/s.
+  - Conserver les réglages : mode, commandes créatives, styles, exposition.
+  - Bouton de volume pour déclencher, Grille, Niveau, Miroir caméra avant.
+  - Styles photographiques, Smart HDR.
 - Les icônes pivotent avec le téléphone et les photos prises en paysage sont dans le bon sens.
 - Toucher pour la mise au point puis glisser pour l'exposition (☀), pincer pour zoomer, boutons
   de volume pour déclencher, son et vibration du déclencheur.
-- Photos et vidéos dans `DCIM/iLook` (JPEG qualité 95, EXIF conservés).
+- Photos et vidéos dans `DCIM/Camera`, le même album que l'appareil photo Samsung. La miniature
+  ouvre directement la Galerie Samsung.
 
 Pas reproduits : Panorama (demande un assemblage d'images en direct), Spatial (vidéo 3D pour
 l'Apple Vision Pro) et Live Photo. Le flou de Portrait et Cinématique vient d'une détection de

@@ -5,14 +5,14 @@ plugins {
 
 android {
     namespace = "com.vindovinou.ilook"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.vindovinou.ilook"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "2.0"
     }
 
     buildTypes {
@@ -36,11 +36,14 @@ android {
 }
 
 dependencies {
-    val camerax = "1.4.2"
+    val camerax = "1.6.2"
     implementation("androidx.camera:camera-core:$camerax")
     implementation("androidx.camera:camera-camera2:$camerax")
     implementation("androidx.camera:camera-lifecycle:$camerax")
     implementation("androidx.camera:camera-view:$camerax")
+    implementation("androidx.camera:camera-video:$camerax")
+    implementation("androidx.camera:camera-extensions:$camerax")
+    implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6")
 
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")

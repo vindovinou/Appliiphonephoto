@@ -53,6 +53,26 @@ object PhotoSaver {
         return upright to exif
     }
 
+    /**
+     * Centre-crops to [ratio] (long side / short side), keeping the photo's orientation.
+     * Returns [src] itself when it already has that shape.
+     */
+    fun cropToRatio(src: Bitmap, ratio: Float): Bitmap {
+        val landscape = src.width >= src.height
+        val long = if (landscape) src.width else src.height
+        val short = if (landscape) src.height else src.width
+        var newLong = long
+        var newShort = (long / ratio).toInt()
+        if (newShort > short) {
+            newShort = short
+            newLong = (short * ratio).toInt()
+        }
+        if (newLong == long && newShort == short) return src
+        val w = if (landscape) newLong else newShort
+        val h = if (landscape) newShort else newLong
+        return Bitmap.createBitmap(src, (src.width - w) / 2, (src.height - h) / 2, w, h)
+    }
+
     fun save(context: Context, bitmap: Bitmap, sourceExif: ExifInterface?, styleLabel: String): Uri {
         val name = "ILK_" + SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
         val values = ContentValues().apply {

@@ -1,7 +1,5 @@
 <resources>
-    <string name="app_name">iLook Camera</string>
-    <string name="mode_photo">PHOTO</string>
+    <string name="app_name">Caméra</string>
     <string name="permission_needed">L\'accès à la caméra est nécessaire.</string>
-    <string name="saved">Photo enregistrée</string>
     <string name="save_failed">Échec de l\'enregistrement</string>
 </resources>

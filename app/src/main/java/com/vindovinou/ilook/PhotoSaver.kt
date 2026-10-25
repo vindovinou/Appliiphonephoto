@@ -18,6 +18,9 @@ object PhotoSaver {
 
     private const val JPEG_QUALITY = 95
 
+    /** Same album as the Samsung camera, so photos show up in Gallery > Camera. */
+    val CAMERA_ROLL = Environment.DIRECTORY_DCIM + "/Camera"
+
     private val COPIED_TAGS = listOf(
         ExifInterface.TAG_DATETIME, ExifInterface.TAG_DATETIME_ORIGINAL, ExifInterface.TAG_DATETIME_DIGITIZED,
         ExifInterface.TAG_OFFSET_TIME, ExifInterface.TAG_OFFSET_TIME_ORIGINAL,
@@ -73,12 +76,16 @@ object PhotoSaver {
         return Bitmap.createBitmap(src, (src.width - w) / 2, (src.height - h) / 2, w, h)
     }
 
+    /** Horizontal flip, for "Mirror front camera". */
+    fun mirror(src: Bitmap): Bitmap =
+        Bitmap.createBitmap(src, 0, 0, src.width, src.height, Matrix().apply { postScale(-1f, 1f) }, true)
+
     fun save(context: Context, bitmap: Bitmap, sourceExif: ExifInterface?, styleLabel: String): Uri {
         val name = "ILK_" + SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "$name.jpg")
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/iLook")
+            put(MediaStore.Images.Media.RELATIVE_PATH, CAMERA_ROLL)
             put(MediaStore.Images.Media.IS_PENDING, 1)
         }
         val resolver = context.contentResolver
@@ -92,7 +99,7 @@ object PhotoSaver {
                     for (tag in COPIED_TAGS) sourceExif.getAttribute(tag)?.let { exif.setAttribute(tag, it) }
                 }
                 exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
-                exif.setAttribute(ExifInterface.TAG_SOFTWARE, "iLook Camera ($styleLabel)")
+                exif.setAttribute(ExifInterface.TAG_SOFTWARE, "Caméra ($styleLabel)")
                 exif.saveAttributes()
             }
             values.clear()

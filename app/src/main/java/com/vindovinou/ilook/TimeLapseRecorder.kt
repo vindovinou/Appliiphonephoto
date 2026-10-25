@@ -185,7 +185,7 @@ class TimeLapseRecorder(
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, "ILK_TL_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".mp4")
             put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/iLook")
+            put(MediaStore.Video.Media.RELATIVE_PATH, PhotoSaver.CAMERA_ROLL)
             put(MediaStore.Video.Media.IS_PENDING, 1)
         }
         uri = context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
